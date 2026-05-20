@@ -624,6 +624,8 @@ class XClientTreeApp:
         self.inserted_pid_under_parent = set()
         self.window_row_seq = 0
         self.killed_rows = set()
+        self.view_mode = "chain"
+        self.view_toggle_text = tk.StringVar(value="Switch to Rooted Tree View")
 
         self.root.title("X11 Related Client Finder. Powered by www.icinfra.cn")
         self.root.geometry("1520x760")
@@ -781,6 +783,12 @@ class XClientTreeApp:
 
         ttk.Button(
             button_frame,
+            textvariable=self.view_toggle_text,
+            command=self.toggle_view_mode,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Button(
+            button_frame,
             text="Refresh All",
             command=self.refresh_all,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -794,7 +802,8 @@ class XClientTreeApp:
         info_text = (
             "Initial tree shows the ancestor chain from the top non-PID-1 ancestor down to the seed PID. "
             "PID 1 is excluded from X Client matching. "
-            "Right-click any process row to expand direct children or all descendants."
+            "Right-click any process row to expand direct children or all descendants. "
+            "Use the switch button to toggle between chain view and rooted tree view."
         )
 
         footer = ttk.Label(main, text=info_text, justify=tk.LEFT)
@@ -943,9 +952,7 @@ class XClientTreeApp:
 
         return item_id
 
-    def build_initial_tree(self):
-        self.clear_tree()
-
+    def build_chain_tree(self):
         chain = list(self.context["ancestor_chain"])
         chain = [pid for pid in chain if pid != 1]
         chain.reverse()
@@ -971,6 +978,51 @@ class XClientTreeApp:
                 role_hint="seed",
                 open_item=True,
             )
+
+    def build_rooted_tree(self):
+        chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
+        root_pid = chain[-1] if chain else self.context["seed_pid"]
+        seen = set()
+
+        def recurse(parent_item, pid, depth):
+            if depth > MAX_TREE_NODES or pid in seen:
+                return
+            seen.add(pid)
+
+            role_hint = "root" if parent_item == "" else "descendant"
+            item = self.insert_process_row(
+                pid=pid,
+                parent_item=parent_item,
+                role_hint=role_hint,
+                open_item=True,
+            )
+
+            if not item:
+                return
+
+            for child_pid in self.context["children"].get(pid, []):
+                recurse(item, child_pid, depth + 1)
+
+        recurse("", root_pid, 0)
+
+    def build_initial_tree(self):
+        self.clear_tree()
+
+        if self.view_mode == "rooted":
+            self.build_rooted_tree()
+        else:
+            self.build_chain_tree()
+
+    def update_view_toggle_text(self):
+        if self.view_mode == "chain":
+            self.view_toggle_text.set("Switch to Rooted Tree View")
+        else:
+            self.view_toggle_text.set("Switch to Ancestor Chain View")
+
+    def toggle_view_mode(self):
+        self.view_mode = "rooted" if self.view_mode == "chain" else "chain"
+        self.update_view_toggle_text()
+        self.build_initial_tree()
 
     def get_selected_item(self):
         selected = self.tree.selection()
