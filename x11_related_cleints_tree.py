@@ -489,6 +489,32 @@ def activate_window_async(window_id, mode):
     ).start()
 
 
+def xkill_window(window_id):
+    if not window_id:
+        return
+
+    try:
+        subprocess.run(
+            ["xkill", "-id", window_id],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=ACTIVATE_CMD_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def xkill_window_async(window_id):
+    if not window_id:
+        return
+
+    threading.Thread(
+        target=xkill_window,
+        args=(window_id,),
+        daemon=True,
+    ).start()
+
+
 def flash_window_ids(window_ids, rounds, interval, mode, restore_focus):
     original_active = get_active_window() if restore_focus else None
 
@@ -584,6 +610,7 @@ class XClientTreeApp:
         self.pid_item = {}
         self.inserted_pid_under_parent = set()
         self.window_row_seq = 0
+        self.killed_rows = set()
 
         self.root.title("X11 Related Client Finder. Powered by www.icinfra.cn")
         self.root.geometry("1520x760")
@@ -705,6 +732,8 @@ class XClientTreeApp:
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
 
+        self.tree.tag_configure("killed", foreground="gray")
+
         self.tree.bind("<Double-1>", self.on_double_click)
         self.tree.bind("<Return>", lambda event: self.activate_selected())
         self.tree.bind("<Button-3>", self.on_right_click)
@@ -768,6 +797,7 @@ class XClientTreeApp:
         self.pid_item.clear()
         self.inserted_pid_under_parent.clear()
         self.window_row_seq = 0
+        self.killed_rows.clear()
 
     def role_for_pid(self, pid, role_hint=None):
         seed_pid = self.context["seed_pid"]
@@ -954,12 +984,34 @@ class XClientTreeApp:
         return self.row_window_ids.get(item, [])
 
     def activate_selected(self):
+        item = self.get_selected_item()
+
+        if item is None or item in self.killed_rows:
+            return
+
         window_ids = self.get_selected_window_ids()
 
         if not window_ids:
             return
 
         activate_window_async(window_ids[0], self.activate_mode)
+
+    def xkill_window_row(self, item):
+        if not item or item in self.killed_rows:
+            return
+
+        if self.row_type.get(item) != "window":
+            return
+
+        window_ids = self.row_window_ids.get(item, [])
+        if not window_ids:
+            return
+
+        # Gray out immediately; xkill runs in background.
+        self.killed_rows.add(item)
+        self.tree.item(item, tags=("killed",))
+
+        xkill_window_async(window_ids[0])
 
     def on_double_click(self, event):
         item = self.tree.identify_row(event.y)
@@ -1064,27 +1116,48 @@ class XClientTreeApp:
 
         self.tree.selection_set(item)
 
-        if self.row_type.get(item) != "process":
+        row_type = self.row_type.get(item)
+
+        if row_type == "process":
+            menu = tk.Menu(self.root, tearoff=0)
+
+            menu.add_command(
+                label="Expand direct child processes",
+                command=lambda item=item: self.expand_direct_children(item),
+            )
+
+            menu.add_command(
+                label="Expand all descendant processes",
+                command=lambda item=item: self.expand_all_descendants(item),
+            )
+
+            menu.add_separator()
+
+            menu.add_command(
+                label="Activate first related window",
+                command=self.activate_selected,
+            )
+
+        elif row_type == "window":
+            if item in self.killed_rows:
+                return
+
+            menu = tk.Menu(self.root, tearoff=0)
+
+            menu.add_command(
+                label="Activate this window",
+                command=self.activate_selected,
+            )
+
+            menu.add_separator()
+
+            menu.add_command(
+                label="xkill this window",
+                command=lambda item=item: self.xkill_window_row(item),
+            )
+
+        else:
             return
-
-        menu = tk.Menu(self.root, tearoff=0)
-
-        menu.add_command(
-            label="Expand direct child processes",
-            command=lambda item=item: self.expand_direct_children(item),
-        )
-
-        menu.add_command(
-            label="Expand all descendant processes",
-            command=lambda item=item: self.expand_all_descendants(item),
-        )
-
-        menu.add_separator()
-
-        menu.add_command(
-            label="Activate first related window",
-            command=self.activate_selected,
-        )
 
         try:
             menu.tk_popup(event.x_root, event.y_root)
@@ -1243,7 +1316,7 @@ def main():
 
     args = parser.parse_args()
 
-    for cmd in ["xprop", "ssh", "xdotool"]:
+    for cmd in ["xprop", "ssh", "xdotool", "xkill"]:
         if not command_exists(cmd):
             show_error(
                 "Missing command: {}\n\n"
