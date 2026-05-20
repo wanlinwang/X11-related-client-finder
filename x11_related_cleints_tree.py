@@ -36,8 +36,12 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict
+
+
+ACTIVATE_CMD_TIMEOUT = 3
 
 
 DEFAULT_SSH_CONNECT_TIMEOUT = 8
@@ -451,17 +455,38 @@ def activate_window(window_id, mode):
         return
 
     if mode == "raise":
-        cmd = ["xdotool", "windowraise", window_id]
+        cmds = [["xdotool", "windowraise", window_id]]
     elif mode == "focus":
-        cmd = ["xdotool", "windowfocus", window_id]
+        cmds = [["xdotool", "windowfocus", window_id]]
     else:
-        cmd = ["xdotool", "windowactivate", "--sync", window_id]
+        # No --sync: avoids blocking on slow window managers. Follow with windowraise
+        # so the window still comes forward even if activate hasn't taken effect yet.
+        cmds = [
+            ["xdotool", "windowactivate", window_id],
+            ["xdotool", "windowraise", window_id],
+        ]
 
-    subprocess.call(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    for cmd in cmds:
+        try:
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=ACTIVATE_CMD_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def activate_window_async(window_id, mode):
+    if not window_id:
+        return
+
+    threading.Thread(
+        target=activate_window,
+        args=(window_id, mode),
+        daemon=True,
+    ).start()
 
 
 def flash_window_ids(window_ids, rounds, interval, mode, restore_focus):
@@ -934,7 +959,7 @@ class XClientTreeApp:
         if not window_ids:
             return
 
-        activate_window(window_ids[0], self.activate_mode)
+        activate_window_async(window_ids[0], self.activate_mode)
 
     def on_double_click(self, event):
         item = self.tree.identify_row(event.y)
@@ -957,13 +982,17 @@ class XClientTreeApp:
     def flash_visible_windows(self):
         window_ids = self.visible_window_ids()
 
-        flash_window_ids(
-            window_ids=window_ids,
-            rounds=self.flash_rounds,
-            interval=self.flash_interval,
-            mode=self.activate_mode,
-            restore_focus=self.restore_focus,
-        )
+        threading.Thread(
+            target=flash_window_ids,
+            kwargs={
+                "window_ids": window_ids,
+                "rounds": self.flash_rounds,
+                "interval": self.flash_interval,
+                "mode": self.activate_mode,
+                "restore_focus": self.restore_focus,
+            },
+            daemon=True,
+        ).start()
 
     def expand_direct_children(self, item):
         if not item:
