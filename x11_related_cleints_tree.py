@@ -1140,6 +1140,27 @@ class XClientTreeApp:
     def expand_selected_all_descendants(self):
         self.expand_all_descendants(self.get_selected_item())
 
+    def row_is_open(self, item):
+        # Tk may return "0"/"1" strings, ints, or bools depending on version —
+        # bool("0") is True, so normalize via str() first.
+        return str(self.tree.item(item, "open")).lower() in ("1", "true")
+
+    def toggle_expand_row(self, item):
+        if not item:
+            return
+        self.tree.item(item, open=not self.row_is_open(item))
+
+    def set_open_recursive(self, item, target):
+        self.tree.item(item, open=target)
+        for child in self.tree.get_children(item):
+            self.set_open_recursive(child, target)
+
+    def toggle_expand_all_rows(self, item):
+        if not item:
+            return
+        target = not self.row_is_open(item)
+        self.set_open_recursive(item, target)
+
     def on_right_click(self, event):
         tk = self.tk
 
@@ -1154,6 +1175,23 @@ class XClientTreeApp:
 
         if row_type == "process":
             menu = tk.Menu(self.root, tearoff=0)
+
+            if self.tree.get_children(item):
+                is_open = self.row_is_open(item)
+                label_one = "Collapse" if is_open else "Expand"
+                label_all = "Collapse All" if is_open else "Expand All"
+
+                menu.add_command(
+                    label=label_one,
+                    command=lambda item=item: self.toggle_expand_row(item),
+                )
+
+                menu.add_command(
+                    label=label_all,
+                    command=lambda item=item: self.toggle_expand_all_rows(item),
+                )
+
+                menu.add_separator()
 
             menu.add_command(
                 label="Expand direct child processes",
