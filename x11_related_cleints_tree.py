@@ -451,8 +451,9 @@ def get_active_window():
 
 
 def activate_window(window_id, mode):
+    """Return True if at least one xdotool sub-command exited 0 (window exists)."""
     if not window_id:
-        return
+        return False
 
     if mode == "raise":
         cmds = [["xdotool", "windowraise", window_id]]
@@ -466,25 +467,37 @@ def activate_window(window_id, mode):
             ["xdotool", "windowraise", window_id],
         ]
 
+    any_success = False
+
     for cmd in cmds:
         try:
-            subprocess.run(
+            result = subprocess.run(
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=ACTIVATE_CMD_TIMEOUT,
             )
+            if result.returncode == 0:
+                any_success = True
         except subprocess.TimeoutExpired:
             pass
 
+    return any_success
 
-def activate_window_async(window_id, mode):
+
+def activate_window_async(window_id, mode, on_done=None):
     if not window_id:
+        if on_done:
+            on_done(False)
         return
 
+    def worker():
+        ok = activate_window(window_id, mode)
+        if on_done:
+            on_done(ok)
+
     threading.Thread(
-        target=activate_window,
-        args=(window_id, mode),
+        target=worker,
         daemon=True,
     ).start()
 
@@ -994,7 +1007,28 @@ class XClientTreeApp:
         if not window_ids:
             return
 
-        activate_window_async(window_ids[0], self.activate_mode)
+        # Only window rows get auto-grayed on failure. A process row's first
+        # window being gone doesn't mean the process is dead.
+        is_window_row = self.row_type.get(item) == "window"
+
+        def on_done(ok, item=item):
+            if ok or not is_window_row:
+                return
+            self.root.after(0, self.mark_row_dead, item)
+
+        activate_window_async(
+            window_ids[0],
+            self.activate_mode,
+            on_done=on_done,
+        )
+
+    def mark_row_dead(self, item):
+        if item in self.killed_rows:
+            return
+        if not self.tree.exists(item):
+            return
+        self.killed_rows.add(item)
+        self.tree.item(item, tags=("killed",))
 
     def xkill_window_row(self, item):
         if not item or item in self.killed_rows:
