@@ -68,6 +68,7 @@ GRAPH_NODE_X_GAP = 64
 GRAPH_ZOOM_STEP = 1.12
 GRAPH_ZOOM_MIN = 0.45
 GRAPH_ZOOM_MAX = 2.8
+GRAPH_ZOOM_EPSILON = 1e-9
 GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
 GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
 GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
@@ -1835,7 +1836,7 @@ class XClientTreeApp:
         new_zoom = max(GRAPH_ZOOM_MIN, min(GRAPH_ZOOM_MAX, self.graph_zoom * factor))
         applied = new_zoom / self.graph_zoom
 
-        if abs(applied - 1.0) < 1e-9:
+        if abs(applied - 1.0) < GRAPH_ZOOM_EPSILON:
             return
 
         x = self.graph_canvas.canvasx(event.x)
