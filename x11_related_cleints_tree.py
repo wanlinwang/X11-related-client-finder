@@ -56,7 +56,7 @@ DEFAULT_FLASH_INTERVAL = 0.45
 INIT_PID = 1
 MAX_TREE_NODES = 30000
 
-TRUNCATION_CHAR = "…"
+TRUNCATION_CHAR = "..."
 GRAPH_NODE_TEXT_MAX_CHARS = 54
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
@@ -1287,7 +1287,10 @@ class XClientTreeApp:
         return self.row_window_ids.get(item, [])
 
     def is_window_item(self, item):
-        return self.row_type.get(item) == "window" or self.graph_node_type.get(item) == "window"
+        if self.view_mode == "rooted":
+            return self.graph_node_type.get(item) == "window"
+
+        return self.row_type.get(item) == "window"
 
     def activate_selected(self):
         item = self.get_selected_item()
@@ -1332,9 +1335,14 @@ class XClientTreeApp:
         self.tree.item(item, tags=("killed",))
 
     def select_graph_node(self, node_id):
-        for existing_node, items in self.graph_node_canvas_items.items():
-            node_type = self.graph_node_type.get(existing_node)
-            normal_outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
+        if self.graph_selected_node in self.graph_node_canvas_items:
+            items = self.graph_node_canvas_items[self.graph_selected_node]
+            node_type = self.graph_node_type.get(self.graph_selected_node)
+            normal_outline = (
+                GRAPH_PROCESS_OUTLINE_COLOR
+                if node_type == "process"
+                else GRAPH_WINDOW_OUTLINE_COLOR
+            )
             self.graph_canvas.itemconfigure(items[0], outline=normal_outline, width=GRAPH_NODE_OUTLINE_WIDTH)
 
         self.graph_selected_node = node_id
