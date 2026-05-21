@@ -56,10 +56,11 @@ DEFAULT_FLASH_INTERVAL = 0.45
 INIT_PID = 1
 MAX_TREE_NODES = 30000
 
-TRUNCATION_ELLIPSIS = "…"
+TRUNCATION_CHAR = "…"
 GRAPH_NODE_TEXT_MAX_CHARS = 54
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
+GRAPH_NODE_OUTLINE_WIDTH = 2
 GRAPH_PROCESS_X = 40
 GRAPH_WINDOW_X = 500
 GRAPH_START_Y = 35
@@ -1080,7 +1081,7 @@ class XClientTreeApp:
         if len(value) <= max_chars:
             return value
 
-        return value[:max_chars - 1] + TRUNCATION_ELLIPSIS
+        return value[:max_chars - len(TRUNCATION_CHAR)] + TRUNCATION_CHAR
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
         canvas = self.graph_canvas
@@ -1096,7 +1097,7 @@ class XClientTreeApp:
             y + height,
             fill=fill,
             outline=outline,
-            width=2,
+            width=GRAPH_NODE_OUTLINE_WIDTH,
             tags=("graph_node",),
         )
         title_item = canvas.create_text(
@@ -1285,6 +1286,9 @@ class XClientTreeApp:
 
         return self.row_window_ids.get(item, [])
 
+    def is_window_item(self, item):
+        return self.row_type.get(item) == "window" or self.graph_node_type.get(item) == "window"
+
     def activate_selected(self):
         item = self.get_selected_item()
 
@@ -1298,7 +1302,7 @@ class XClientTreeApp:
 
         # Only window rows get auto-grayed on failure. A process row's first
         # window being gone doesn't mean the process is dead.
-        is_window_row = self.row_type.get(item) == "window" or self.graph_node_type.get(item) == "window"
+        is_window_row = self.is_window_item(item)
 
         def on_done(ok, item=item):
             if ok or not is_window_row:
@@ -1331,7 +1335,7 @@ class XClientTreeApp:
         for existing_node, items in self.graph_node_canvas_items.items():
             node_type = self.graph_node_type.get(existing_node)
             normal_outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
-            self.graph_canvas.itemconfigure(items[0], outline=normal_outline, width=2)
+            self.graph_canvas.itemconfigure(items[0], outline=normal_outline, width=GRAPH_NODE_OUTLINE_WIDTH)
 
         self.graph_selected_node = node_id
 
