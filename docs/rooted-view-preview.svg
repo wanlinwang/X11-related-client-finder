@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620">
+  <rect x="10" y="10" width="1080" height="600" rx="8" fill="#f8fafc" stroke="#cbd5e1"/>
+  <rect x="30" y="30" width="300" height="40" rx="6" fill="#e2e8f0" stroke="#64748b"/>
+  <text x="45" y="56" font-family="Arial" font-size="16" fill="#0f172a">Switch to Ancestor Chain View</text>
+
+  <line x1="550" y1="120" x2="350" y2="220" stroke="#64748b" stroke-width="2"/>
+  <line x1="550" y1="120" x2="750" y2="220" stroke="#64748b" stroke-width="2"/>
+  <line x1="350" y1="220" x2="250" y2="320" stroke="#64748b" stroke-width="2"/>
+  <line x1="350" y1="220" x2="450" y2="320" stroke="#64748b" stroke-width="2"/>
+  <line x1="450" y1="320" x2="450" y2="410" stroke="#64748b" stroke-width="2"/>
+  <line x1="750" y1="220" x2="750" y2="320" stroke="#64748b" stroke-width="2"/>
+
+  <rect x="470" y="90" width="160" height="55" rx="8" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="488" y="122" font-family="Arial" font-size="15" fill="#1e3a8a">Process 22000</text>
+
+  <rect x="270" y="190" width="160" height="55" rx="8" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="288" y="222" font-family="Arial" font-size="15" fill="#1e3a8a">Process 23124</text>
+
+  <rect x="670" y="190" width="160" height="55" rx="8" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="688" y="222" font-family="Arial" font-size="15" fill="#1e3a8a">Process 23540</text>
+
+  <rect x="170" y="290" width="160" height="55" rx="8" fill="#ecfeff" stroke="#0e7490"/>
+  <text x="200" y="322" font-family="Arial" font-size="15" fill="#155e75">Window 0x04...</text>
+
+  <rect x="370" y="290" width="160" height="55" rx="8" fill="#dbeafe" stroke="#1d4ed8"/>
+  <text x="388" y="322" font-family="Arial" font-size="15" fill="#1e3a8a">Process 23360</text>
+
+  <rect x="370" y="390" width="160" height="55" rx="8" fill="#ecfeff" stroke="#0e7490"/>
+  <text x="400" y="422" font-family="Arial" font-size="15" fill="#155e75">Window 0x08...</text>
+
+  <rect x="670" y="290" width="160" height="55" rx="8" fill="#ecfeff" stroke="#0e7490"/>
+  <text x="700" y="322" font-family="Arial" font-size="15" fill="#155e75">Window 0x0c...</text>
+
+  <text x="30" y="560" font-family="Arial" font-size="16" fill="#334155">Preview: rooted mode uses process/window nodes and parent-child links with root on top.</text>
+</svg>
