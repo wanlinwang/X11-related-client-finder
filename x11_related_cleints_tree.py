@@ -52,10 +52,10 @@ DEFAULT_ACTIVATE_MODE = "activate"
 DEFAULT_FLASH_ROUNDS = 1
 DEFAULT_FLASH_INTERVAL = 0.45
 
+INIT_PID = 1
 MAX_TREE_NODES = 30000
 
 GRAPH_NODE_TEXT_MAX_CHARS = 54
-GRAPH_NODE_ELLIPSIS_RESERVE = 1
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
 GRAPH_PROCESS_X = 40
@@ -334,7 +334,7 @@ def build_ancestor_chain_to_pid1(seed_pid, procs):
         chain.append(current)
         seen.add(current)
 
-        if current == 1:
+        if current == INIT_PID:
             break
 
         ppid = procs[current]["ppid"]
@@ -889,7 +889,7 @@ class XClientTreeApp:
     def role_for_pid(self, pid, role_hint=None):
         seed_pid = self.context["seed_pid"]
         ancestor_chain = self.context["ancestor_chain"]
-        ancestor_set = set(pid for pid in ancestor_chain if pid != 1)
+        ancestor_set = set(pid for pid in ancestor_chain if pid != INIT_PID)
 
         roles = []
 
@@ -1019,7 +1019,7 @@ class XClientTreeApp:
 
     def build_chain_tree(self):
         chain = list(self.context["ancestor_chain"])
-        chain = [pid for pid in chain if pid != 1]
+        chain = [pid for pid in chain if pid != INIT_PID]
         chain.reverse()
 
         parent = ""
@@ -1045,7 +1045,7 @@ class XClientTreeApp:
             )
 
     def build_rooted_tree(self):
-        chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
+        chain = [pid for pid in self.context["ancestor_chain"] if pid != INIT_PID]
         chain.reverse()
         parent = ""
 
@@ -1075,7 +1075,7 @@ class XClientTreeApp:
         if len(value) <= max_chars:
             return value
 
-        return value[:max_chars - GRAPH_NODE_ELLIPSIS_RESERVE] + "…"
+        return value[:max_chars - 1] + "…"
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
         canvas = self.graph_canvas
@@ -1144,7 +1144,7 @@ class XClientTreeApp:
         )
 
     def build_rooted_graph(self):
-        chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
+        chain = [pid for pid in self.context["ancestor_chain"] if pid != INIT_PID]
         chain.reverse()
 
         if not chain:
