@@ -624,6 +624,12 @@ class XClientTreeApp:
         self.inserted_pid_under_parent = set()
         self.window_row_seq = 0
         self.killed_rows = set()
+        self.graph_node_type = {}
+        self.graph_node_pid = {}
+        self.graph_node_window_ids = {}
+        self.graph_node_canvas_items = {}
+        self.graph_canvas_item_node = {}
+        self.graph_selected_node = None
         self.view_mode = "chain"
         self.view_toggle_text = tk.StringVar(value="Switch to Rooted Tree View")
 
@@ -658,6 +664,7 @@ class XClientTreeApp:
 
         tree_frame = ttk.Frame(main)
         tree_frame.pack(fill=tk.BOTH, expand=True)
+        self.tree_frame = tree_frame
 
         columns = (
             "type",
@@ -743,6 +750,35 @@ class XClientTreeApp:
         self.tree.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
         xscroll.grid(row=1, column=0, sticky="ew")
+        self.tree_yscroll = yscroll
+        self.tree_xscroll = xscroll
+
+        self.graph_canvas = tk.Canvas(
+            tree_frame,
+            background="white",
+            highlightthickness=1,
+            highlightbackground="#9a9a9a",
+        )
+
+        graph_yscroll = ttk.Scrollbar(
+            tree_frame,
+            orient=tk.VERTICAL,
+            command=self.graph_canvas.yview,
+        )
+
+        graph_xscroll = ttk.Scrollbar(
+            tree_frame,
+            orient=tk.HORIZONTAL,
+            command=self.graph_canvas.xview,
+        )
+
+        self.graph_canvas.configure(
+            yscrollcommand=graph_yscroll.set,
+            xscrollcommand=graph_xscroll.set,
+        )
+
+        self.graph_yscroll = graph_yscroll
+        self.graph_xscroll = graph_xscroll
 
         tree_frame.rowconfigure(0, weight=1)
         tree_frame.columnconfigure(0, weight=1)
@@ -753,6 +789,8 @@ class XClientTreeApp:
         self.tree.bind("<Return>", lambda event: self.activate_selected())
         self.tree.bind("<Button-3>", self.on_right_click)
         self.tree.bind("<Button-2>", self.on_right_click)
+        self.graph_canvas.bind("<Button-1>", self.on_graph_click)
+        self.graph_canvas.bind("<Double-1>", self.on_graph_double_click)
 
         button_frame = ttk.Frame(main)
         button_frame.pack(fill=tk.X, pady=(10, 0))
@@ -803,7 +841,7 @@ class XClientTreeApp:
             "Initial tree shows the ancestor chain from the top non-PID-1 ancestor down to the seed PID. "
             "PID 1 is excluded from X Client matching. "
             "Right-click any process row to expand direct children or all descendants. "
-            "Use the switch button to toggle between ancestor-chain view and rooted node-link tree view."
+            "Use the switch button to toggle between ancestor-chain rows and a drawn process/window node-link tree."
         )
 
         footer = ttk.Label(main, text=info_text, justify=tk.LEFT)
@@ -820,6 +858,19 @@ class XClientTreeApp:
         self.inserted_pid_under_parent.clear()
         self.window_row_seq = 0
         self.killed_rows.clear()
+
+    def clear_graph(self):
+        self.graph_canvas.delete("all")
+        self.graph_node_type.clear()
+        self.graph_node_pid.clear()
+        self.graph_node_window_ids.clear()
+        self.graph_node_canvas_items.clear()
+        self.graph_canvas_item_node.clear()
+        self.graph_selected_node = None
+
+    def clear_display_state(self):
+        self.clear_tree()
+        self.clear_graph()
 
     def role_for_pid(self, pid, role_hint=None):
         seed_pid = self.context["seed_pid"]
@@ -1004,11 +1055,151 @@ class XClientTreeApp:
                 open_item=True,
             )
 
+    def short_text(self, value, max_chars=54):
+        value = str(value or "")
+
+        if len(value) <= max_chars:
+            return value
+
+        return value[:max_chars - 1] + "…"
+
+    def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
+        canvas = self.graph_canvas
+        width = 380
+        height = 58
+        fill = "#e8f1ff" if node_type == "process" else "#e8f7e8"
+        outline = "#4c78a8" if node_type == "process" else "#59a14f"
+
+        rect = canvas.create_rectangle(
+            x,
+            y,
+            x + width,
+            y + height,
+            fill=fill,
+            outline=outline,
+            width=2,
+            tags=("graph_node",),
+        )
+        title_item = canvas.create_text(
+            x + 10,
+            y + 14,
+            text=self.short_text(title),
+            anchor="w",
+            font=("TkDefaultFont", 10, "bold"),
+            tags=("graph_node",),
+        )
+        detail_item = canvas.create_text(
+            x + 10,
+            y + 38,
+            text=self.short_text(details),
+            anchor="w",
+            tags=("graph_node",),
+        )
+
+        items = [rect, title_item, detail_item]
+        self.graph_node_type[node_id] = node_type
+        self.graph_node_pid[node_id] = pid
+        self.graph_node_window_ids[node_id] = window_ids
+        self.graph_node_canvas_items[node_id] = items
+
+        for item in items:
+            self.graph_canvas_item_node[item] = node_id
+
+        return (x, y, x + width, y + height)
+
+    def create_graph_edge(self, source_box, target_box):
+        sx = (source_box[0] + source_box[2]) / 2
+        sy = source_box[3]
+        tx = (target_box[0] + target_box[2]) / 2
+        ty = target_box[1]
+
+        if source_box[0] != target_box[0]:
+            sx = source_box[2]
+            sy = (source_box[1] + source_box[3]) / 2
+            tx = target_box[0]
+            ty = (target_box[1] + target_box[3]) / 2
+
+        self.graph_canvas.create_line(
+            sx,
+            sy,
+            tx,
+            ty,
+            fill="#555555",
+            width=2,
+            arrow=self.tk.LAST,
+        )
+
+    def build_rooted_graph(self):
+        chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
+        chain.reverse()
+
+        if not chain:
+            chain = [self.context["seed_pid"]]
+
+        process_x = 40
+        window_x = 500
+        y = 35
+        process_gap = 120
+        window_gap = 74
+        previous_process_box = None
+
+        for index, pid in enumerate(chain):
+            info = self.context["procs"].get(pid, {})
+            role_hint = "root" if index == 0 else "descendant"
+            role = self.role_for_pid(pid, role_hint)
+            windows = self.context["pid_to_windows"].get(pid, [])
+            window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
+
+            process_title = "PID {}  {}".format(pid, role)
+            process_details = "{}  user={} stat={} windows={}".format(
+                info.get("comm", ""),
+                info.get("user", ""),
+                info.get("stat", ""),
+                len(windows),
+            )
+            process_box = self.create_graph_node(
+                "g_pid_{}".format(pid),
+                "process",
+                pid,
+                window_ids,
+                process_x,
+                y,
+                process_title,
+                process_details,
+            )
+
+            if previous_process_box:
+                self.create_graph_edge(previous_process_box, process_box)
+
+            window_y = y
+            for seq, window in enumerate(windows, 1):
+                window_id = window.get("WINDOW_ID", "")
+                window_box = self.create_graph_node(
+                    "g_win_{}_{}".format(pid, seq),
+                    "window",
+                    pid,
+                    [window_id] if window_id else [],
+                    window_x,
+                    window_y,
+                    "Window {}  {}".format(window_id, window.get("WM_NAME", "")),
+                    "class={} machine={}".format(
+                        window.get("WM_CLASS", ""),
+                        window.get("WM_CLIENT_MACHINE", ""),
+                    ),
+                )
+                self.create_graph_edge(process_box, window_box)
+                window_y += window_gap
+
+            previous_process_box = process_box
+            y += max(process_gap, window_gap * max(1, len(windows)))
+
+        self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
+
     def build_initial_tree(self):
-        self.clear_tree()
+        self.clear_display_state()
 
         if self.view_mode == "rooted":
-            self.build_rooted_tree()
+            self.build_rooted_graph()
         else:
             self.build_chain_tree()
 
@@ -1016,8 +1207,19 @@ class XClientTreeApp:
 
     def configure_tree_display_mode(self):
         if self.view_mode == "rooted":
-            self.tree.configure(show="tree")
+            self.tree.grid_remove()
+            self.tree_yscroll.grid_remove()
+            self.tree_xscroll.grid_remove()
+            self.graph_canvas.grid(row=0, column=0, sticky="nsew")
+            self.graph_yscroll.grid(row=0, column=1, sticky="ns")
+            self.graph_xscroll.grid(row=1, column=0, sticky="ew")
         else:
+            self.graph_canvas.grid_remove()
+            self.graph_yscroll.grid_remove()
+            self.graph_xscroll.grid_remove()
+            self.tree.grid(row=0, column=0, sticky="nsew")
+            self.tree_yscroll.grid(row=0, column=1, sticky="ns")
+            self.tree_xscroll.grid(row=1, column=0, sticky="ew")
             self.tree.configure(show="tree headings")
 
     def update_view_toggle_text(self):
@@ -1032,6 +1234,9 @@ class XClientTreeApp:
         self.build_initial_tree()
 
     def get_selected_item(self):
+        if self.view_mode == "rooted":
+            return self.graph_selected_node
+
         selected = self.tree.selection()
 
         if not selected:
@@ -1045,6 +1250,9 @@ class XClientTreeApp:
         if not item:
             return None
 
+        if self.view_mode == "rooted":
+            return self.graph_node_pid.get(item)
+
         return self.row_pid.get(item)
 
     def get_selected_window_ids(self):
@@ -1052,6 +1260,9 @@ class XClientTreeApp:
 
         if not item:
             return []
+
+        if self.view_mode == "rooted":
+            return self.graph_node_window_ids.get(item, [])
 
         return self.row_window_ids.get(item, [])
 
@@ -1068,7 +1279,7 @@ class XClientTreeApp:
 
         # Only window rows get auto-grayed on failure. A process row's first
         # window being gone doesn't mean the process is dead.
-        is_window_row = self.row_type.get(item) == "window"
+        is_window_row = self.row_type.get(item) == "window" or self.graph_node_type.get(item) == "window"
 
         def on_done(ok, item=item):
             if ok or not is_window_row:
@@ -1084,10 +1295,54 @@ class XClientTreeApp:
     def mark_row_dead(self, item):
         if item in self.killed_rows:
             return
+
+        if item in self.graph_node_canvas_items:
+            self.killed_rows.add(item)
+            for canvas_item in self.graph_node_canvas_items.get(item, []):
+                self.graph_canvas.itemconfigure(canvas_item, fill="gray")
+            return
+
         if not self.tree.exists(item):
             return
+
         self.killed_rows.add(item)
         self.tree.item(item, tags=("killed",))
+
+    def select_graph_node(self, node_id):
+        for existing_node, items in self.graph_node_canvas_items.items():
+            node_type = self.graph_node_type.get(existing_node)
+            normal_outline = "#4c78a8" if node_type == "process" else "#59a14f"
+            self.graph_canvas.itemconfigure(items[0], outline=normal_outline, width=2)
+
+        self.graph_selected_node = node_id
+
+        if not node_id:
+            return
+
+        items = self.graph_node_canvas_items.get(node_id, [])
+
+        if items:
+            self.graph_canvas.itemconfigure(items[0], outline="#d62728", width=3)
+
+    def graph_node_at_event(self, event):
+        canvas = self.graph_canvas
+        x = canvas.canvasx(event.x)
+        y = canvas.canvasy(event.y)
+
+        for canvas_item in canvas.find_overlapping(x, y, x, y):
+            node_id = self.graph_canvas_item_node.get(canvas_item)
+
+            if node_id:
+                return node_id
+
+        return None
+
+    def on_graph_click(self, event):
+        self.select_graph_node(self.graph_node_at_event(event))
+
+    def on_graph_double_click(self, event):
+        self.select_graph_node(self.graph_node_at_event(event))
+        self.activate_selected()
 
     def xkill_window_row(self, item):
         if not item or item in self.killed_rows:
@@ -1116,9 +1371,10 @@ class XClientTreeApp:
 
     def visible_window_ids(self):
         window_ids = []
+        source = self.graph_node_window_ids if self.view_mode == "rooted" else self.row_window_ids
 
-        for item in self.row_window_ids:
-            for window_id in self.row_window_ids.get(item, []):
+        for item in source:
+            for window_id in source.get(item, []):
                 if window_id and window_id not in window_ids:
                     window_ids.append(window_id)
 
