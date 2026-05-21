@@ -928,6 +928,18 @@ class XClientTreeApp:
 
         ttk.Button(
             button_frame,
+            text="Expand Direct Children (Re-SSH)",
+            command=self.refresh_then_expand_selected_direct_children,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Button(
+            button_frame,
+            text="Expand All Descendants (Re-SSH)",
+            command=self.refresh_then_expand_selected_all_descendants,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Button(
+            button_frame,
             textvariable=self.view_toggle_text,
             command=self.toggle_view_mode,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -2315,6 +2327,57 @@ class XClientTreeApp:
 
     def expand_selected_all_descendants(self):
         self.expand_all_descendants(self.get_selected_item())
+
+    def get_selected_process_pid(self):
+        item = self.get_selected_item()
+
+        if not item:
+            return None
+
+        if self.view_mode == "rooted":
+            if self.graph_node_type.get(item) != "process":
+                return None
+            return self.graph_node_pid.get(item)
+
+        if self.row_type.get(item) != "process":
+            return None
+
+        return self.row_pid.get(item)
+
+    def process_item_for_pid(self, pid):
+        if pid is None:
+            return None
+
+        if self.view_mode == "rooted":
+            for node_id, node_pid in self.graph_node_pid.items():
+                if (
+                    node_pid == pid
+                    and self.graph_node_type.get(node_id) == "process"
+                ):
+                    return node_id
+            return None
+
+        return self.pid_item.get(pid)
+
+    def refresh_then_expand_selected_direct_children(self):
+        pid = self.get_selected_process_pid()
+
+        if pid is None:
+            return
+
+        self.refresh_all()
+        process_item = self.process_item_for_pid(pid)
+        self.expand_direct_children(process_item)
+
+    def refresh_then_expand_selected_all_descendants(self):
+        pid = self.get_selected_process_pid()
+
+        if pid is None:
+            return
+
+        self.refresh_all()
+        process_item = self.process_item_for_pid(pid)
+        self.expand_all_descendants(process_item)
 
     def row_is_open(self, item):
         # Tk may return "0"/"1" strings, ints, or bools depending on version —
