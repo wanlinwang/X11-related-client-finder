@@ -56,10 +56,7 @@ DEFAULT_FLASH_INTERVAL = 0.45
 INIT_PID = 1
 MAX_TREE_NODES = 30000
 
-TRUNCATION_CHAR = "..."
-GRAPH_NODE_TEXT_MAX_CHARS = 54
 GRAPH_NODE_MIN_WIDTH = 120
-GRAPH_NODE_MAX_WIDTH = 380
 GRAPH_NODE_HEIGHT_SINGLE_LINE = 34
 GRAPH_NODE_HEIGHT_DOUBLE_LINE = 58
 GRAPH_NODE_TEXT_PADDING_X = 10
@@ -1123,69 +1120,16 @@ class XClientTreeApp:
                 open_item=True,
             )
 
-    def short_text(self, value, max_chars=GRAPH_NODE_TEXT_MAX_CHARS):
-        value = str(value or "")
-
-        if len(value) <= max_chars:
-            return value
-
-        if max_chars <= len(TRUNCATION_CHAR):
-            return TRUNCATION_CHAR[:max_chars]
-
-        return value[:max_chars - len(TRUNCATION_CHAR)] + TRUNCATION_CHAR
-
-    def fit_text_to_pixel_width(self, value, font, max_width):
-        value = str(value or "")
-
-        if max_width <= 0:
-            return ""
-
-        if font.measure(value) <= max_width:
-            return value
-
-        trunc_width = font.measure(TRUNCATION_CHAR)
-
-        if trunc_width >= max_width:
-            out = ""
-            for ch in TRUNCATION_CHAR:
-                if font.measure(out + ch) > max_width:
-                    break
-                out += ch
-            return out
-
-        low = 0
-        high = len(value)
-
-        while low < high:
-            mid = (low + high + 1) // 2
-            candidate = value[:mid] + TRUNCATION_CHAR
-
-            if font.measure(candidate) <= max_width:
-                low = mid
-            else:
-                high = mid - 1
-
-        return value[:low] + TRUNCATION_CHAR
-
     def graph_node_text_and_size(self, title, details):
-        max_text_width = max(1, GRAPH_NODE_MAX_WIDTH - GRAPH_NODE_TEXT_PADDING_X * 2)
-        title_text = self.fit_text_to_pixel_width(
-            self.short_text(title),
-            self.graph_title_font,
-            max_text_width,
-        )
-        detail_text = self.fit_text_to_pixel_width(
-            self.short_text(details),
-            self.graph_detail_font,
-            max_text_width,
-        )
+        title_text = str(title or "")
+        detail_text = str(details or "")
         has_detail = bool(detail_text.strip())
         title_width = self.graph_title_font.measure(title_text)
         detail_width = self.graph_detail_font.measure(detail_text) if has_detail else 0
         content_width = max(title_width, detail_width)
         width = max(
             GRAPH_NODE_MIN_WIDTH,
-            min(GRAPH_NODE_MAX_WIDTH, content_width + GRAPH_NODE_TEXT_PADDING_X * 2),
+            content_width + GRAPH_NODE_TEXT_PADDING_X * 2,
         )
         height = GRAPH_NODE_HEIGHT_DOUBLE_LINE if has_detail else GRAPH_NODE_HEIGHT_SINGLE_LINE
         return title_text, detail_text, has_detail, width, height
