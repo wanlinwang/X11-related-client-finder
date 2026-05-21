@@ -1007,14 +1007,15 @@ class XClientTreeApp:
 
     def build_initial_tree(self):
         self.clear_tree()
-        self.apply_tree_presentation()
 
         if self.view_mode == "rooted":
             self.build_rooted_tree()
         else:
             self.build_chain_tree()
 
-    def apply_tree_presentation(self):
+        self.configure_tree_display_mode()
+
+    def configure_tree_display_mode(self):
         if self.view_mode == "rooted":
             self.tree.configure(show="tree")
         else:
