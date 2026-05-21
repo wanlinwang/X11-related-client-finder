@@ -981,8 +981,21 @@ class XClientTreeApp:
 
     def build_rooted_tree(self):
         chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
-        root_pid = chain[-1] if chain else self.context["seed_pid"]
+        seed_root_pid = chain[-1] if chain else self.context["seed_pid"]
         seen = set()
+
+        def top_non_pid1_ancestor(pid):
+            if pid not in self.context["procs"]:
+                return None
+
+            current = pid
+            parent = self.context["procs"][current]["ppid"]
+
+            while parent in self.context["procs"] and parent != 1:
+                current = parent
+                parent = self.context["procs"][current]["ppid"]
+
+            return current
 
         def recurse(parent_item, pid):
             if len(seen) > MAX_TREE_NODES or pid in seen:
@@ -1003,7 +1016,19 @@ class XClientTreeApp:
             for child_pid in self.context["children"].get(pid, []):
                 recurse(item, child_pid)
 
-        recurse("", root_pid)
+        root_pids = []
+
+        for pid in [seed_root_pid]:
+            if pid and pid not in root_pids:
+                root_pids.append(pid)
+
+        for xclient_pid in sorted(self.context["pid_to_windows"].keys()):
+            root_pid = top_non_pid1_ancestor(xclient_pid)
+            if root_pid and root_pid not in root_pids:
+                root_pids.append(root_pid)
+
+        for root_pid in root_pids:
+            recurse("", root_pid)
 
     def build_initial_tree(self):
         self.clear_tree()
