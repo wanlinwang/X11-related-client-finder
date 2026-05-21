@@ -1303,8 +1303,8 @@ class XClientTreeApp:
                         parent_of[child_pid] = parent_pid
                         pending.append(child_pid)
 
-                    grand_children = self.context["children"].get(child_pid, [])
-                    stack.extend((child_pid, grand_pid) for grand_pid in grand_children)
+                    grandchildren = self.context["children"].get(child_pid, [])
+                    stack.extend((child_pid, grandchild_pid) for grandchild_pid in grandchildren)
             elif pid in self.rooted_expanded_direct_pids:
                 for child_pid in children:
                     if child_pid not in parent_of:
@@ -1784,11 +1784,10 @@ class XClientTreeApp:
 
         if pid in self.rooted_expanded_direct_pids or pid in self.rooted_expanded_all_pids:
             self.collapse_rooted_pid(pid)
-        else:
-            self.rooted_expanded_all_pids.discard(pid)
-            self.rooted_expanded_direct_pids.add(pid)
+            self.rerender_rooted_graph()
+            return
 
-        self.rerender_rooted_graph()
+        self.expand_rooted_direct_pid(pid)
 
     def toggle_rooted_expand_all_pid(self, pid):
         if pid is None:
@@ -1796,11 +1795,10 @@ class XClientTreeApp:
 
         if pid in self.rooted_expanded_all_pids:
             self.collapse_rooted_pid(pid)
-        else:
-            self.rooted_expanded_direct_pids.discard(pid)
-            self.rooted_expanded_all_pids.add(pid)
+            self.rerender_rooted_graph()
+            return
 
-        self.rerender_rooted_graph()
+        self.expand_rooted_all_pid(pid)
 
     def expand_rooted_direct_node(self, node_id):
         self.expand_rooted_direct_pid(self.graph_node_pid.get(node_id))
