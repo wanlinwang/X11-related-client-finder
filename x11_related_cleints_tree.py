@@ -981,56 +981,28 @@ class XClientTreeApp:
 
     def build_rooted_tree(self):
         chain = [pid for pid in self.context["ancestor_chain"] if pid != 1]
-        seed_root_pid = chain[-1] if chain else self.context["seed_pid"]
-        seen = set()
+        chain.reverse()
+        parent = ""
 
-        def top_non_pid1_ancestor(pid):
-            if pid not in self.context["procs"]:
-                return None
-
-            current = pid
-            parent = self.context["procs"][current]["ppid"]
-
-            while parent in self.context["procs"] and parent != 1:
-                current = parent
-                parent = self.context["procs"][current]["ppid"]
-
-            return current
-
-        def recurse(parent_item, pid):
-            if len(seen) > MAX_TREE_NODES or pid in seen:
-                return
-            seen.add(pid)
-
-            role_hint = "root" if parent_item == "" else "descendant"
+        for index, pid in enumerate(chain):
+            role_hint = "root" if index == 0 else "descendant"
             item = self.insert_process_row(
                 pid=pid,
-                parent_item=parent_item,
+                parent_item=parent,
                 role_hint=role_hint,
                 open_item=True,
             )
 
-            if not item:
-                return
+            if item:
+                parent = item
 
-            for child_pid in self.context["children"].get(pid, []):
-                recurse(item, child_pid)
-
-        root_pids = []
-        root_pid_seen = set()
-
-        if seed_root_pid:
-            root_pids.append(seed_root_pid)
-            root_pid_seen.add(seed_root_pid)
-
-        for xclient_pid in sorted(self.context["pid_to_windows"].keys()):
-            root_pid = top_non_pid1_ancestor(xclient_pid)
-            if root_pid and root_pid not in root_pid_seen:
-                root_pids.append(root_pid)
-                root_pid_seen.add(root_pid)
-
-        for root_pid in root_pids:
-            recurse("", root_pid)
+        if not chain:
+            self.insert_process_row(
+                pid=self.context["seed_pid"],
+                parent_item="",
+                role_hint="seed",
+                open_item=True,
+            )
 
     def build_initial_tree(self):
         self.clear_tree()
