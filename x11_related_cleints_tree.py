@@ -55,6 +55,7 @@ DEFAULT_FLASH_INTERVAL = 0.45
 MAX_TREE_NODES = 30000
 
 GRAPH_NODE_TEXT_MAX_CHARS = 54
+GRAPH_NODE_ELLIPSIS_RESERVE = 1
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
 GRAPH_PROCESS_X = 40
@@ -62,6 +63,10 @@ GRAPH_WINDOW_X = 500
 GRAPH_START_Y = 35
 GRAPH_PROCESS_GAP = 120
 GRAPH_WINDOW_GAP = 74
+GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
+GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
+GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
+GRAPH_WINDOW_OUTLINE_COLOR = "#59a14f"
 
 
 def command_exists(cmd):
@@ -1070,14 +1075,14 @@ class XClientTreeApp:
         if len(value) <= max_chars:
             return value
 
-        return value[:max_chars - 1] + "…"
+        return value[:max_chars - GRAPH_NODE_ELLIPSIS_RESERVE] + "…"
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
         canvas = self.graph_canvas
         width = GRAPH_NODE_WIDTH
         height = GRAPH_NODE_HEIGHT
-        fill = "#e8f1ff" if node_type == "process" else "#e8f7e8"
-        outline = "#4c78a8" if node_type == "process" else "#59a14f"
+        fill = GRAPH_PROCESS_FILL_COLOR if node_type == "process" else GRAPH_WINDOW_FILL_COLOR
+        outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
 
         rect = canvas.create_rectangle(
             x,
@@ -1320,7 +1325,7 @@ class XClientTreeApp:
     def select_graph_node(self, node_id):
         for existing_node, items in self.graph_node_canvas_items.items():
             node_type = self.graph_node_type.get(existing_node)
-            normal_outline = "#4c78a8" if node_type == "process" else "#59a14f"
+            normal_outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
             self.graph_canvas.itemconfigure(items[0], outline=normal_outline, width=2)
 
         self.graph_selected_node = node_id
