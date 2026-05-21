@@ -61,11 +61,10 @@ GRAPH_NODE_TEXT_MAX_CHARS = 54
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
 GRAPH_NODE_OUTLINE_WIDTH = 2
-GRAPH_PROCESS_X = 40
-GRAPH_WINDOW_X = 500
+GRAPH_LAYOUT_MARGIN_X = 40
 GRAPH_START_Y = 35
-GRAPH_PROCESS_GAP = 120
-GRAPH_WINDOW_GAP = 74
+GRAPH_LEVEL_Y_GAP = 92
+GRAPH_NODE_X_GAP = 64
 GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
 GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
 GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
@@ -1247,11 +1246,10 @@ class XClientTreeApp:
         if not chain:
             chain = [self.context["seed_pid"]]
 
-        process_x = GRAPH_PROCESS_X
-        window_x = GRAPH_WINDOW_X
-        y = GRAPH_START_Y
-        process_gap = GRAPH_PROCESS_GAP
-        window_gap = GRAPH_WINDOW_GAP
+        node_specs = {}
+        child_map = defaultdict(list)
+        depth_map = {}
+        root_node_id = None
         previous_process_node_id = None
 
         for index, pid in enumerate(chain):
@@ -1262,49 +1260,98 @@ class XClientTreeApp:
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
             process_node_id = "g_pid_{}".format(pid)
 
-            process_title = "PID {} {}".format(pid, role)
-            process_details = "{}  user={} stat={} windows={}".format(
-                info.get("comm", ""),
-                info.get("user", ""),
-                info.get("stat", ""),
-                len(windows),
-            )
-            self.create_graph_node(
-                process_node_id,
-                "process",
-                pid,
-                window_ids,
-                process_x,
-                y,
-                process_title,
-                process_details,
-            )
+            if root_node_id is None:
+                root_node_id = process_node_id
+                depth_map[process_node_id] = 0
+
+            node_specs[process_node_id] = {
+                "node_type": "process",
+                "pid": pid,
+                "window_ids": window_ids,
+                "title": "PID {} {}".format(pid, role),
+                "details": "{}  user={} stat={} windows={}".format(
+                    info.get("comm", ""),
+                    info.get("user", ""),
+                    info.get("stat", ""),
+                    len(windows),
+                ),
+            }
 
             if previous_process_node_id:
-                self.create_graph_edge(previous_process_node_id, process_node_id)
+                child_map[previous_process_node_id].append(process_node_id)
+                depth_map[process_node_id] = depth_map[previous_process_node_id] + 1
 
-            window_y = y
             for seq, window in enumerate(windows, 1):
                 window_id = window.get("WINDOW_ID", "")
                 window_node_id = "g_win_{}_{}".format(pid, seq)
-                self.create_graph_node(
-                    window_node_id,
-                    "window",
-                    pid,
-                    [window_id] if window_id else [],
-                    window_x,
-                    window_y,
-                    "Window {}  {}".format(window_id, window.get("WM_NAME", "")),
-                    "class={} machine={}".format(
+                node_specs[window_node_id] = {
+                    "node_type": "window",
+                    "pid": pid,
+                    "window_ids": [window_id] if window_id else [],
+                    "title": "Window {}  {}".format(window_id, window.get("WM_NAME", "")),
+                    "details": "class={} machine={}".format(
                         window.get("WM_CLASS", ""),
                         window.get("WM_CLIENT_MACHINE", ""),
                     ),
-                )
-                self.create_graph_edge(process_node_id, window_node_id)
-                window_y += window_gap
+                }
+                child_map[process_node_id].append(window_node_id)
+                depth_map[window_node_id] = depth_map[process_node_id] + 1
 
             previous_process_node_id = process_node_id
-            y += max(process_gap, window_gap * max(1, len(windows)))
+
+        if not root_node_id:
+            return
+
+        levels = defaultdict(list)
+        queue = [root_node_id]
+        seen = set()
+
+        while queue:
+            node_id = queue.pop(0)
+
+            if node_id in seen:
+                continue
+
+            seen.add(node_id)
+            depth = depth_map.get(node_id, 0)
+            levels[depth].append(node_id)
+            queue.extend(child_map.get(node_id, []))
+
+        if not levels:
+            return
+
+        max_nodes_per_level = max(len(items) for items in levels.values())
+        max_level_width = (
+            max_nodes_per_level * GRAPH_NODE_WIDTH
+            + max(0, max_nodes_per_level - 1) * GRAPH_NODE_X_GAP
+        )
+
+        for depth in sorted(levels.keys()):
+            node_ids = levels[depth]
+            level_width = (
+                len(node_ids) * GRAPH_NODE_WIDTH
+                + max(0, len(node_ids) - 1) * GRAPH_NODE_X_GAP
+            )
+            start_x = GRAPH_LAYOUT_MARGIN_X + (max_level_width - level_width) / 2
+            y = GRAPH_START_Y + depth * (GRAPH_NODE_HEIGHT + GRAPH_LEVEL_Y_GAP)
+
+            for index, node_id in enumerate(node_ids):
+                x = start_x + index * (GRAPH_NODE_WIDTH + GRAPH_NODE_X_GAP)
+                spec = node_specs[node_id]
+                self.create_graph_node(
+                    node_id,
+                    spec["node_type"],
+                    spec["pid"],
+                    spec["window_ids"],
+                    x,
+                    y,
+                    spec["title"],
+                    spec["details"],
+                )
+
+        for parent_node_id, child_node_ids in child_map.items():
+            for child_node_id in child_node_ids:
+                self.create_graph_edge(parent_node_id, child_node_id)
 
         self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
 
