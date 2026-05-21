@@ -91,6 +91,7 @@ GRAPH_WINDOW_THUMB_TOP_PADDING = 10
 GRAPH_WINDOW_THUMB_BG = "#f2f4f8"
 GRAPH_WINDOW_THUMB_PENDING_TEXT = "Loading preview..."
 GRAPH_WINDOW_THUMB_MISSING_TEXT = "No preview"
+GRAPH_WINDOW_THUMB_CAPTURE_TIMEOUT_SECONDS = 6
 
 
 def command_exists(cmd):
@@ -1435,13 +1436,12 @@ class XClientTreeApp:
             with tempfile.NamedTemporaryFile(
                 suffix=".png",
                 delete=False,
-                dir="/tmp",
             ) as handle:
                 temp_file = handle.name
 
             rc, out, err = run_cmd(
                 ["import", "-window", window_id, temp_file],
-                timeout=6,
+                timeout=GRAPH_WINDOW_THUMB_CAPTURE_TIMEOUT_SECONDS,
             )
 
             if rc != 0:
