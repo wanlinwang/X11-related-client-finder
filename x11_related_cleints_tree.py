@@ -70,6 +70,8 @@ GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
 GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
 GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
 GRAPH_WINDOW_OUTLINE_COLOR = "#59a14f"
+GRAPH_CARD_SHADOW_COLOR = "#ccd6e4"
+GRAPH_CARD_SEPARATOR_COLOR = "#c0c8d6"
 GRAPH_DEAD_ITEM_COLOR = "gray"
 GRAPH_SELECTION_OUTLINE_COLOR = "#d62728"
 GRAPH_SELECTION_OUTLINE_WIDTH = 3
@@ -649,7 +651,11 @@ class XClientTreeApp:
         self.graph_node_window_ids = {}
         self.graph_node_canvas_items = {}
         self.graph_canvas_item_node = {}
+        self.graph_node_boxes = {}
+        self.graph_edges = []
         self.graph_selected_node = None
+        self.graph_drag_node = None
+        self.graph_drag_last_xy = None
         self.view_mode = "chain"
         self.view_toggle_text = tk.StringVar(value="Switch to Rooted Tree View")
 
@@ -809,8 +815,12 @@ class XClientTreeApp:
         self.tree.bind("<Return>", lambda event: self.activate_selected())
         self.tree.bind("<Button-3>", self.on_right_click)
         self.tree.bind("<Button-2>", self.on_right_click)
-        self.graph_canvas.bind("<Button-1>", self.on_graph_click)
+        self.graph_canvas.bind("<ButtonPress-1>", self.on_graph_press)
+        self.graph_canvas.bind("<B1-Motion>", self.on_graph_drag)
+        self.graph_canvas.bind("<ButtonRelease-1>", self.on_graph_release)
         self.graph_canvas.bind("<Double-1>", self.on_graph_double_click)
+        self.graph_canvas.bind("<Button-3>", self.on_graph_right_click)
+        self.graph_canvas.bind("<Button-2>", self.on_graph_right_click)
 
         button_frame = ttk.Frame(main)
         button_frame.pack(fill=tk.X, pady=(10, 0))
@@ -886,7 +896,11 @@ class XClientTreeApp:
         self.graph_node_window_ids.clear()
         self.graph_node_canvas_items.clear()
         self.graph_canvas_item_node.clear()
+        self.graph_node_boxes.clear()
+        self.graph_edges.clear()
         self.graph_selected_node = None
+        self.graph_drag_node = None
+        self.graph_drag_last_xy = None
 
     def clear_display_state(self):
         self.clear_tree()
@@ -1093,6 +1107,15 @@ class XClientTreeApp:
         fill = GRAPH_PROCESS_FILL_COLOR if node_type == "process" else GRAPH_WINDOW_FILL_COLOR
         outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
 
+        shadow = canvas.create_rectangle(
+            x + 3,
+            y + 3,
+            x + width + 3,
+            y + height + 3,
+            fill=GRAPH_CARD_SHADOW_COLOR,
+            outline="",
+            tags=("graph_node",),
+        )
         rect = canvas.create_rectangle(
             x,
             y,
@@ -1111,6 +1134,15 @@ class XClientTreeApp:
             font=("TkDefaultFont", 10, "bold"),
             tags=("graph_node",),
         )
+        separator = canvas.create_line(
+            x + 10,
+            y + 24,
+            x + width - 10,
+            y + 24,
+            fill=GRAPH_CARD_SEPARATOR_COLOR,
+            width=1,
+            tags=("graph_node",),
+        )
         detail_item = canvas.create_text(
             x + 10,
             y + 38,
@@ -1119,38 +1151,94 @@ class XClientTreeApp:
             tags=("graph_node",),
         )
 
-        items = [rect, title_item, detail_item]
+        items = [rect, title_item, detail_item, shadow, separator]
         self.graph_node_type[node_id] = node_type
         self.graph_node_pid[node_id] = pid
         self.graph_node_window_ids[node_id] = window_ids
         self.graph_node_canvas_items[node_id] = items
+        self.graph_node_boxes[node_id] = (x, y, x + width, y + height)
 
         for item in items:
             self.graph_canvas_item_node[item] = node_id
 
         return (x, y, x + width, y + height)
 
-    def create_graph_edge(self, source_box, target_box):
-        sx = (source_box[0] + source_box[2]) / 2
-        sy = source_box[3]
-        tx = (target_box[0] + target_box[2]) / 2
-        ty = target_box[1]
+    def graph_edge_points(self, source_box, target_box):
+        source_center_x = (source_box[0] + source_box[2]) / 2
+        source_center_y = (source_box[1] + source_box[3]) / 2
+        target_center_x = (target_box[0] + target_box[2]) / 2
+        target_center_y = (target_box[1] + target_box[3]) / 2
 
-        if source_box[0] != target_box[0]:
-            sx = source_box[2]
-            sy = (source_box[1] + source_box[3]) / 2
-            tx = target_box[0]
-            ty = (target_box[1] + target_box[3]) / 2
+        if abs(target_center_x - source_center_x) >= abs(target_center_y - source_center_y):
+            if target_center_x >= source_center_x:
+                sx = source_box[2]
+                sy = source_center_y
+                tx = target_box[0]
+                ty = target_center_y
+            else:
+                sx = source_box[0]
+                sy = source_center_y
+                tx = target_box[2]
+                ty = target_center_y
+        else:
+            if target_center_y >= source_center_y:
+                sx = source_center_x
+                sy = source_box[3]
+                tx = target_center_x
+                ty = target_box[1]
+            else:
+                sx = source_center_x
+                sy = source_box[1]
+                tx = target_center_x
+                ty = target_box[3]
 
-        self.graph_canvas.create_line(
-            sx,
-            sy,
-            tx,
-            ty,
+        dx = tx - sx
+        dy = ty - sy
+        c1x = sx + dx * 0.35
+        c1y = sy + dy * 0.10
+        c2x = sx + dx * 0.65
+        c2y = sy + dy * 0.90
+        return (sx, sy, c1x, c1y, c2x, c2y, tx, ty)
+
+    def redraw_graph_edge(self, edge):
+        source_box = self.graph_node_boxes.get(edge["source"])
+        target_box = self.graph_node_boxes.get(edge["target"])
+
+        if not source_box or not target_box:
+            return
+
+        self.graph_canvas.coords(
+            edge["item"],
+            *self.graph_edge_points(source_box, target_box),
+        )
+        self.graph_canvas.tag_lower(edge["item"])
+
+    def redraw_graph_edges_for_node(self, node_id):
+        for edge in self.graph_edges:
+            if edge["source"] == node_id or edge["target"] == node_id:
+                self.redraw_graph_edge(edge)
+
+    def create_graph_edge(self, source_node_id, target_node_id):
+        source_box = self.graph_node_boxes.get(source_node_id)
+        target_box = self.graph_node_boxes.get(target_node_id)
+
+        if not source_box or not target_box:
+            return
+
+        line = self.graph_canvas.create_line(
+            *self.graph_edge_points(source_box, target_box),
             fill="#555555",
             width=2,
             arrow="last",
+            smooth=True,
+            splinesteps=28,
         )
+        self.graph_canvas.tag_lower(line)
+        self.graph_edges.append({
+            "item": line,
+            "source": source_node_id,
+            "target": target_node_id,
+        })
 
     def build_rooted_graph(self):
         chain = [pid for pid in self.context["ancestor_chain"] if pid != INIT_PID]
@@ -1164,7 +1252,7 @@ class XClientTreeApp:
         y = GRAPH_START_Y
         process_gap = GRAPH_PROCESS_GAP
         window_gap = GRAPH_WINDOW_GAP
-        previous_process_box = None
+        previous_process_node_id = None
 
         for index, pid in enumerate(chain):
             info = self.context["procs"].get(pid, {})
@@ -1172,6 +1260,7 @@ class XClientTreeApp:
             role = self.role_for_pid(pid, role_hint)
             windows = self.context["pid_to_windows"].get(pid, [])
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
+            process_node_id = "g_pid_{}".format(pid)
 
             process_title = "PID {} {}".format(pid, role)
             process_details = "{}  user={} stat={} windows={}".format(
@@ -1180,8 +1269,8 @@ class XClientTreeApp:
                 info.get("stat", ""),
                 len(windows),
             )
-            process_box = self.create_graph_node(
-                "g_pid_{}".format(pid),
+            self.create_graph_node(
+                process_node_id,
                 "process",
                 pid,
                 window_ids,
@@ -1191,14 +1280,15 @@ class XClientTreeApp:
                 process_details,
             )
 
-            if previous_process_box:
-                self.create_graph_edge(previous_process_box, process_box)
+            if previous_process_node_id:
+                self.create_graph_edge(previous_process_node_id, process_node_id)
 
             window_y = y
             for seq, window in enumerate(windows, 1):
                 window_id = window.get("WINDOW_ID", "")
-                window_box = self.create_graph_node(
-                    "g_win_{}_{}".format(pid, seq),
+                window_node_id = "g_win_{}_{}".format(pid, seq)
+                self.create_graph_node(
+                    window_node_id,
                     "window",
                     pid,
                     [window_id] if window_id else [],
@@ -1210,10 +1300,10 @@ class XClientTreeApp:
                         window.get("WM_CLIENT_MACHINE", ""),
                     ),
                 )
-                self.create_graph_edge(process_box, window_box)
+                self.create_graph_edge(process_node_id, window_node_id)
                 window_y += window_gap
 
-            previous_process_box = process_box
+            previous_process_node_id = process_node_id
             y += max(process_gap, window_gap * max(1, len(windows)))
 
         self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
@@ -1377,12 +1467,92 @@ class XClientTreeApp:
 
         return None
 
-    def on_graph_click(self, event):
-        self.select_graph_node(self.graph_node_at_event(event))
+    def move_graph_node(self, node_id, dx, dy):
+        if not node_id or node_id not in self.graph_node_canvas_items:
+            return
+
+        for canvas_item in self.graph_node_canvas_items.get(node_id, []):
+            self.graph_canvas.move(canvas_item, dx, dy)
+
+        box = self.graph_node_boxes.get(node_id)
+
+        if box:
+            self.graph_node_boxes[node_id] = (
+                box[0] + dx,
+                box[1] + dy,
+                box[2] + dx,
+                box[3] + dy,
+            )
+
+        self.redraw_graph_edges_for_node(node_id)
+
+    def on_graph_press(self, event):
+        node_id = self.graph_node_at_event(event)
+        self.select_graph_node(node_id)
+
+        if not node_id:
+            self.graph_drag_node = None
+            self.graph_drag_last_xy = None
+            return
+
+        self.graph_drag_node = node_id
+        self.graph_drag_last_xy = (
+            self.graph_canvas.canvasx(event.x),
+            self.graph_canvas.canvasy(event.y),
+        )
+
+    def on_graph_drag(self, event):
+        if not self.graph_drag_node or not self.graph_drag_last_xy:
+            return
+
+        current = (
+            self.graph_canvas.canvasx(event.x),
+            self.graph_canvas.canvasy(event.y),
+        )
+        dx = current[0] - self.graph_drag_last_xy[0]
+        dy = current[1] - self.graph_drag_last_xy[1]
+
+        if dx == 0 and dy == 0:
+            return
+
+        self.move_graph_node(self.graph_drag_node, dx, dy)
+        self.graph_drag_last_xy = current
+
+    def on_graph_release(self, event):
+        self.graph_drag_node = None
+        self.graph_drag_last_xy = None
 
     def on_graph_double_click(self, event):
         self.select_graph_node(self.graph_node_at_event(event))
         self.activate_selected()
+
+    def on_graph_right_click(self, event):
+        tk = self.tk
+        node_id = self.graph_node_at_event(event)
+
+        if not node_id:
+            return
+
+        self.select_graph_node(node_id)
+
+        if self.graph_node_type.get(node_id) != "window" or node_id in self.killed_rows:
+            return
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(
+            label="Activate this window",
+            command=self.activate_selected,
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="xkill this window",
+            command=lambda node_id=node_id: self.xkill_graph_window_node(node_id),
+        )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def xkill_window_row(self, item):
         if not item or item in self.killed_rows:
@@ -1399,6 +1569,20 @@ class XClientTreeApp:
         self.killed_rows.add(item)
         self.tree.item(item, tags=("killed",))
 
+        xkill_window_async(window_ids[0])
+
+    def xkill_graph_window_node(self, node_id):
+        if not node_id or node_id in self.killed_rows:
+            return
+
+        if self.graph_node_type.get(node_id) != "window":
+            return
+
+        window_ids = self.graph_node_window_ids.get(node_id, [])
+        if not window_ids:
+            return
+
+        self.mark_row_dead(node_id)
         xkill_window_async(window_ids[0])
 
     def on_double_click(self, event):
