@@ -152,6 +152,15 @@ def parse_xprop_value(line):
     return value
 
 
+def wm_class_first_field(value):
+    raw = str(value or "").strip()
+
+    if not raw:
+        return ""
+
+    return raw.split(",", 1)[0].strip().strip('"').strip("'")
+
+
 def normalize_pid(pid_text):
     pid_text = str(pid_text).strip()
     m = re.search(r"\d+", pid_text)
@@ -1343,6 +1352,7 @@ class XClientTreeApp:
             process_node_id = "g_pid_{}".format(pid)
             windows = self.context["pid_to_windows"].get(pid, [])
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
+            comm = info.get("comm", "")
             role_hint = "root" if depth == 0 else "descendant"
             role = self.role_for_pid(pid, role_hint)
 
@@ -1353,13 +1363,8 @@ class XClientTreeApp:
                 "node_type": "process",
                 "pid": pid,
                 "window_ids": window_ids,
-                "title": "PID {} {}".format(pid, role),
-                "details": "{}  user={} stat={} windows={}".format(
-                    info.get("comm", ""),
-                    info.get("user", ""),
-                    info.get("stat", ""),
-                    len(windows),
-                ),
+                "title": comm,
+                "details": "",
             }
             depth_map[process_node_id] = depth
 
@@ -1371,16 +1376,14 @@ class XClientTreeApp:
 
             for seq, window in enumerate(windows, 1):
                 window_id = window.get("WINDOW_ID", "")
+                wm_class_first = wm_class_first_field(window.get("WM_CLASS", ""))
                 window_node_id = "g_win_{}_{}".format(pid, seq)
                 node_specs[window_node_id] = {
                     "node_type": "window",
                     "pid": pid,
                     "window_ids": [window_id] if window_id else [],
-                    "title": "Window {}  {}".format(window_id, window.get("WM_NAME", "")),
-                    "details": "class={} machine={}".format(
-                        window.get("WM_CLASS", ""),
-                        window.get("WM_CLIENT_MACHINE", ""),
-                    ),
+                    "title": wm_class_first,
+                    "details": "",
                 }
                 child_map[process_node_id].append(window_node_id)
                 depth_map[window_node_id] = depth + 1
