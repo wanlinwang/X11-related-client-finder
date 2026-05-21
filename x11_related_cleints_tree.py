@@ -1017,15 +1017,17 @@ class XClientTreeApp:
                 recurse(item, child_pid)
 
         root_pids = []
+        root_pid_seen = set()
 
-        for pid in [seed_root_pid]:
-            if pid and pid not in root_pids:
-                root_pids.append(pid)
+        if seed_root_pid:
+            root_pids.append(seed_root_pid)
+            root_pid_seen.add(seed_root_pid)
 
         for xclient_pid in sorted(self.context["pid_to_windows"].keys()):
             root_pid = top_non_pid1_ancestor(xclient_pid)
-            if root_pid and root_pid not in root_pids:
+            if root_pid and root_pid not in root_pid_seen:
                 root_pids.append(root_pid)
+                root_pid_seen.add(root_pid)
 
         for root_pid in root_pids:
             recurse("", root_pid)
