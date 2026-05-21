@@ -1530,14 +1530,21 @@ class XClientTreeApp:
             if node_type != "window":
                 continue
 
+            if node_id in self.killed_rows:
+                continue
+
             window_id = self.graph_node_window_id.get(node_id, "")
             self.apply_cached_thumbnail_to_node(node_id)
+            entry = self.thumbnail_cache.get(window_id) if window_id else None
 
             if (
                 window_id
                 and self.thumbnail_tool_available
                 and self.pillow_enabled
-                and window_id not in self.thumbnail_cache
+                and (
+                    entry is None
+                    or entry.get("status") != "ok"
+                )
             ):
                 self.start_window_thumbnail_worker(window_id)
 
