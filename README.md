@@ -16,6 +16,7 @@ From the GUI you can:
 
 - **Double-click** a window row (or a process row that owns windows) to bring that GUI window to the front.
 - **Right-click** a process row to expand its direct children or all descendants.
+- **Expand Direct/All Descendants (Re-SSH)** buttons to re-fetch remote process/window state before expanding.
 - **Flash Visible Windows** to cycle activation across every window currently shown in the tree.
 - **Switch View Mode** to toggle the same ancestor-chain data between table-style rows and a drawn process/window node-link tree.
 - **Refresh All** to re-read the remote process table without re-picking the seed window.
