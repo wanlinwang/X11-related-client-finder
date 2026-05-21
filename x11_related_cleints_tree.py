@@ -52,9 +52,11 @@ DEFAULT_ACTIVATE_MODE = "activate"
 DEFAULT_FLASH_ROUNDS = 1
 DEFAULT_FLASH_INTERVAL = 0.45
 
+# Linux/Unix init is PID 1; the ancestor-chain view intentionally stops there.
 INIT_PID = 1
 MAX_TREE_NODES = 30000
 
+TRUNCATION_ELLIPSIS = "…"
 GRAPH_NODE_TEXT_MAX_CHARS = 54
 GRAPH_NODE_WIDTH = 380
 GRAPH_NODE_HEIGHT = 58
@@ -67,6 +69,9 @@ GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
 GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
 GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
 GRAPH_WINDOW_OUTLINE_COLOR = "#59a14f"
+GRAPH_DEAD_ITEM_COLOR = "gray"
+GRAPH_SELECTION_OUTLINE_COLOR = "#d62728"
+GRAPH_SELECTION_OUTLINE_WIDTH = 3
 
 
 def command_exists(cmd):
@@ -1075,7 +1080,7 @@ class XClientTreeApp:
         if len(value) <= max_chars:
             return value
 
-        return value[:max_chars - 1] + "…"
+        return value[:max_chars - 1] + TRUNCATION_ELLIPSIS
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
         canvas = self.graph_canvas
@@ -1140,7 +1145,7 @@ class XClientTreeApp:
             ty,
             fill="#555555",
             width=2,
-            arrow=self.tk.LAST,
+            arrow="last",
         )
 
     def build_rooted_graph(self):
@@ -1313,7 +1318,7 @@ class XClientTreeApp:
         if item in self.graph_node_canvas_items:
             self.killed_rows.add(item)
             for canvas_item in self.graph_node_canvas_items.get(item, []):
-                self.graph_canvas.itemconfigure(canvas_item, fill="gray")
+                self.graph_canvas.itemconfigure(canvas_item, fill=GRAPH_DEAD_ITEM_COLOR)
             return
 
         if not self.tree.exists(item):
@@ -1336,7 +1341,11 @@ class XClientTreeApp:
         items = self.graph_node_canvas_items.get(node_id, [])
 
         if items:
-            self.graph_canvas.itemconfigure(items[0], outline="#d62728", width=3)
+            self.graph_canvas.itemconfigure(
+                items[0],
+                outline=GRAPH_SELECTION_OUTLINE_COLOR,
+                width=GRAPH_SELECTION_OUTLINE_WIDTH,
+            )
 
     def graph_node_at_event(self, event):
         canvas = self.graph_canvas
