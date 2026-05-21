@@ -803,7 +803,7 @@ class XClientTreeApp:
             "Initial tree shows the ancestor chain from the top non-PID-1 ancestor down to the seed PID. "
             "PID 1 is excluded from X Client matching. "
             "Right-click any process row to expand direct children or all descendants. "
-            "Use the switch button to toggle between ancestor-chain view and rooted tree view."
+            "Use the switch button to toggle between ancestor-chain view and rooted node-link tree view."
         )
 
         footer = ttk.Label(main, text=info_text, justify=tk.LEFT)
@@ -1007,11 +1007,18 @@ class XClientTreeApp:
 
     def build_initial_tree(self):
         self.clear_tree()
+        self.apply_tree_presentation()
 
         if self.view_mode == "rooted":
             self.build_rooted_tree()
         else:
             self.build_chain_tree()
+
+    def apply_tree_presentation(self):
+        if self.view_mode == "rooted":
+            self.tree.configure(show="tree")
+        else:
+            self.tree.configure(show="tree headings")
 
     def update_view_toggle_text(self):
         if self.view_mode == "chain":
