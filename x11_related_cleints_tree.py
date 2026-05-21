@@ -1081,6 +1081,9 @@ class XClientTreeApp:
         if len(value) <= max_chars:
             return value
 
+        if max_chars <= len(TRUNCATION_CHAR):
+            return TRUNCATION_CHAR[:max_chars]
+
         return value[:max_chars - len(TRUNCATION_CHAR)] + TRUNCATION_CHAR
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
@@ -1364,6 +1367,8 @@ class XClientTreeApp:
         x = canvas.canvasx(event.x)
         y = canvas.canvasy(event.y)
 
+        # Tk returns overlapping canvas items in stacking order; text and its
+        # rectangle share the same node_id, so the first node hit is sufficient.
         for canvas_item in canvas.find_overlapping(x, y, x, y):
             node_id = self.graph_canvas_item_node.get(canvas_item)
 
