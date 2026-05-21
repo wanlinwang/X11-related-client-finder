@@ -65,6 +65,9 @@ GRAPH_LAYOUT_MARGIN_X = 40
 GRAPH_START_Y = 35
 GRAPH_LEVEL_Y_GAP = 92
 GRAPH_NODE_X_GAP = 64
+GRAPH_ZOOM_STEP = 1.12
+GRAPH_ZOOM_MIN = 0.45
+GRAPH_ZOOM_MAX = 2.8
 GRAPH_PROCESS_FILL_COLOR = "#e8f1ff"
 GRAPH_WINDOW_FILL_COLOR = "#e8f7e8"
 GRAPH_PROCESS_OUTLINE_COLOR = "#4c78a8"
@@ -655,6 +658,11 @@ class XClientTreeApp:
         self.graph_selected_node = None
         self.graph_drag_node = None
         self.graph_drag_last_xy = None
+        self.graph_zoom = 1.0
+        self.graph_pan_active = False
+        self.rooted_expanded_direct_pids = set()
+        self.rooted_expanded_all_pids = set()
+        self.rooted_visible_process_children = defaultdict(list)
         self.view_mode = "chain"
         self.view_toggle_text = tk.StringVar(value="Switch to Rooted Tree View")
 
@@ -819,7 +827,12 @@ class XClientTreeApp:
         self.graph_canvas.bind("<ButtonRelease-1>", self.on_graph_release)
         self.graph_canvas.bind("<Double-1>", self.on_graph_double_click)
         self.graph_canvas.bind("<Button-3>", self.on_graph_right_click)
-        self.graph_canvas.bind("<Button-2>", self.on_graph_right_click)
+        self.graph_canvas.bind("<MouseWheel>", self.on_graph_mousewheel)
+        self.graph_canvas.bind("<Button-4>", self.on_graph_mousewheel)
+        self.graph_canvas.bind("<Button-5>", self.on_graph_mousewheel)
+        self.graph_canvas.bind("<ButtonPress-2>", self.on_graph_pan_start)
+        self.graph_canvas.bind("<B2-Motion>", self.on_graph_pan_drag)
+        self.graph_canvas.bind("<ButtonRelease-2>", self.on_graph_pan_end)
 
         button_frame = ttk.Frame(main)
         button_frame.pack(fill=tk.X, pady=(10, 0))
@@ -900,6 +913,9 @@ class XClientTreeApp:
         self.graph_selected_node = None
         self.graph_drag_node = None
         self.graph_drag_last_xy = None
+        self.graph_zoom = 1.0
+        self.graph_pan_active = False
+        self.rooted_visible_process_children.clear()
 
     def clear_display_state(self):
         self.clear_tree()
@@ -1246,23 +1262,91 @@ class XClientTreeApp:
         if not chain:
             chain = [self.context["seed_pid"]]
 
+        self.rooted_visible_process_children.clear()
         node_specs = {}
         child_map = defaultdict(list)
         depth_map = {}
         root_node_id = None
-        previous_process_node_id = None
+        parent_of = {}
 
         for index, pid in enumerate(chain):
+            if index > 0:
+                parent_of[pid] = chain[index - 1]
+
+        pending = list(chain)
+        processed = set()
+
+        while pending:
+            pid = pending.pop(0)
+
+            if pid in processed:
+                continue
+
+            processed.add(pid)
+            children = self.context["children"].get(pid, [])
+
+            if pid in self.rooted_expanded_all_pids:
+                stack = [(pid, child_pid) for child_pid in children]
+                local_seen = set()
+
+                while stack:
+                    parent_pid, child_pid = stack.pop(0)
+                    pair = (parent_pid, child_pid)
+
+                    if pair in local_seen:
+                        continue
+
+                    local_seen.add(pair)
+
+                    if child_pid not in parent_of:
+                        parent_of[child_pid] = parent_pid
+                        pending.append(child_pid)
+
+                    grand_children = self.context["children"].get(child_pid, [])
+                    stack.extend((child_pid, grand_pid) for grand_pid in grand_children)
+            elif pid in self.rooted_expanded_direct_pids:
+                for child_pid in children:
+                    if child_pid not in parent_of:
+                        parent_of[child_pid] = pid
+                        pending.append(child_pid)
+
+        process_children = defaultdict(list)
+        process_children[None].append(chain[0])
+
+        for child_pid, parent_pid in parent_of.items():
+            process_children[parent_pid].append(child_pid)
+
+        for parent_pid in process_children:
+            process_children[parent_pid] = sorted(set(process_children[parent_pid]))
+
+        process_depth = {}
+        queue = [(chain[0], 0)]
+        seen = set()
+
+        while queue:
+            pid, depth = queue.pop(0)
+
+            if pid in seen:
+                continue
+
+            seen.add(pid)
+            process_depth[pid] = depth
+
+            for child_pid in process_children.get(pid, []):
+                if child_pid not in seen:
+                    queue.append((child_pid, depth + 1))
+
+        for pid in sorted(process_depth.keys(), key=lambda value: (process_depth[value], value)):
             info = self.context["procs"].get(pid, {})
-            role_hint = "root" if index == 0 else "descendant"
-            role = self.role_for_pid(pid, role_hint)
+            depth = process_depth[pid]
+            process_node_id = "g_pid_{}".format(pid)
             windows = self.context["pid_to_windows"].get(pid, [])
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
-            process_node_id = "g_pid_{}".format(pid)
+            role_hint = "root" if depth == 0 else "descendant"
+            role = self.role_for_pid(pid, role_hint)
 
-            if root_node_id is None:
+            if depth == 0:
                 root_node_id = process_node_id
-                depth_map[process_node_id] = 0
 
             node_specs[process_node_id] = {
                 "node_type": "process",
@@ -1276,10 +1360,13 @@ class XClientTreeApp:
                     len(windows),
                 ),
             }
+            depth_map[process_node_id] = depth
 
-            if previous_process_node_id:
-                child_map[previous_process_node_id].append(process_node_id)
-                depth_map[process_node_id] = depth_map[previous_process_node_id] + 1
+            child_processes = process_children.get(pid, [])
+            self.rooted_visible_process_children[pid] = list(child_processes)
+
+            for child_pid in child_processes:
+                child_map[process_node_id].append("g_pid_{}".format(child_pid))
 
             for seq, window in enumerate(windows, 1):
                 window_id = window.get("WINDOW_ID", "")
@@ -1295,9 +1382,7 @@ class XClientTreeApp:
                     ),
                 }
                 child_map[process_node_id].append(window_node_id)
-                depth_map[window_node_id] = depth_map[process_node_id] + 1
-
-            previous_process_node_id = process_node_id
+                depth_map[window_node_id] = depth + 1
 
         if not root_node_id:
             return
@@ -1582,24 +1667,196 @@ class XClientTreeApp:
 
         self.select_graph_node(node_id)
 
-        if self.graph_node_type.get(node_id) != "window" or node_id in self.killed_rows:
-            return
+        node_type = self.graph_node_type.get(node_id)
 
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(
-            label="Activate this window",
-            command=self.activate_selected,
-        )
-        menu.add_separator()
-        menu.add_command(
-            label="xkill this window",
-            command=lambda node_id=node_id: self.xkill_graph_window_node(node_id),
-        )
+        if node_type == "process":
+            pid = self.graph_node_pid.get(node_id)
+            if pid is None:
+                return
+
+            menu = tk.Menu(self.root, tearoff=0)
+            visible_process_children = self.rooted_visible_process_children.get(pid, [])
+
+            if visible_process_children:
+                is_expanded = (
+                    pid in self.rooted_expanded_direct_pids
+                    or pid in self.rooted_expanded_all_pids
+                )
+                is_expanded_all = pid in self.rooted_expanded_all_pids
+                label_one = "Collapse" if is_expanded else "Expand"
+                label_all = "Collapse All" if is_expanded_all else "Expand All"
+
+                menu.add_command(
+                    label=label_one,
+                    command=lambda node_id=node_id: self.toggle_rooted_expand_node(node_id),
+                )
+                menu.add_command(
+                    label=label_all,
+                    command=lambda node_id=node_id: self.toggle_rooted_expand_all_node(node_id),
+                )
+                menu.add_separator()
+
+            menu.add_command(
+                label="Expand direct child processes",
+                command=lambda node_id=node_id: self.expand_rooted_direct_node(node_id),
+            )
+            menu.add_command(
+                label="Expand all descendant processes",
+                command=lambda node_id=node_id: self.expand_rooted_all_node(node_id),
+            )
+            menu.add_separator()
+            menu.add_command(
+                label="Activate first related window",
+                command=self.activate_selected,
+            )
+        elif node_type == "window":
+            if node_id in self.killed_rows:
+                return
+
+            menu = tk.Menu(self.root, tearoff=0)
+            menu.add_command(
+                label="Activate this window",
+                command=self.activate_selected,
+            )
+            menu.add_separator()
+            menu.add_command(
+                label="xkill this window",
+                command=lambda node_id=node_id: self.xkill_graph_window_node(node_id),
+            )
+        else:
+            return
 
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def rooted_descendants(self, root_pid):
+        descendants = set()
+        queue = [root_pid]
+
+        while queue:
+            pid = queue.pop(0)
+
+            for child_pid in self.context["children"].get(pid, []):
+                if child_pid in descendants:
+                    continue
+
+                descendants.add(child_pid)
+                queue.append(child_pid)
+
+        return descendants
+
+    def collapse_rooted_pid(self, pid):
+        self.rooted_expanded_direct_pids.discard(pid)
+        self.rooted_expanded_all_pids.discard(pid)
+
+        for child_pid in self.rooted_descendants(pid):
+            self.rooted_expanded_direct_pids.discard(child_pid)
+            self.rooted_expanded_all_pids.discard(child_pid)
+
+    def rerender_rooted_graph(self):
+        if self.view_mode != "rooted":
+            return
+
+        self.build_initial_tree()
+
+    def expand_rooted_direct_pid(self, pid):
+        if pid is None:
+            return
+
+        self.rooted_expanded_all_pids.discard(pid)
+        self.rooted_expanded_direct_pids.add(pid)
+        self.rerender_rooted_graph()
+
+    def expand_rooted_all_pid(self, pid):
+        if pid is None:
+            return
+
+        self.rooted_expanded_direct_pids.discard(pid)
+        self.rooted_expanded_all_pids.add(pid)
+        self.rerender_rooted_graph()
+
+    def toggle_rooted_expand_pid(self, pid):
+        if pid is None:
+            return
+
+        if pid in self.rooted_expanded_direct_pids or pid in self.rooted_expanded_all_pids:
+            self.collapse_rooted_pid(pid)
+        else:
+            self.rooted_expanded_all_pids.discard(pid)
+            self.rooted_expanded_direct_pids.add(pid)
+
+        self.rerender_rooted_graph()
+
+    def toggle_rooted_expand_all_pid(self, pid):
+        if pid is None:
+            return
+
+        if pid in self.rooted_expanded_all_pids:
+            self.collapse_rooted_pid(pid)
+        else:
+            self.rooted_expanded_direct_pids.discard(pid)
+            self.rooted_expanded_all_pids.add(pid)
+
+        self.rerender_rooted_graph()
+
+    def expand_rooted_direct_node(self, node_id):
+        self.expand_rooted_direct_pid(self.graph_node_pid.get(node_id))
+
+    def expand_rooted_all_node(self, node_id):
+        self.expand_rooted_all_pid(self.graph_node_pid.get(node_id))
+
+    def toggle_rooted_expand_node(self, node_id):
+        self.toggle_rooted_expand_pid(self.graph_node_pid.get(node_id))
+
+    def toggle_rooted_expand_all_node(self, node_id):
+        self.toggle_rooted_expand_all_pid(self.graph_node_pid.get(node_id))
+
+    def sync_graph_node_boxes_from_canvas(self):
+        for node_id, items in self.graph_node_canvas_items.items():
+            if not items:
+                continue
+
+            coords = self.graph_canvas.coords(items[0])
+            if len(coords) == 4:
+                self.graph_node_boxes[node_id] = tuple(coords)
+
+    def on_graph_mousewheel(self, event):
+        if not self.graph_node_canvas_items:
+            return
+
+        if getattr(event, "num", None) in (4, 5):
+            zoom_in = event.num == 4
+        else:
+            zoom_in = getattr(event, "delta", 0) > 0
+
+        factor = GRAPH_ZOOM_STEP if zoom_in else (1.0 / GRAPH_ZOOM_STEP)
+        new_zoom = max(GRAPH_ZOOM_MIN, min(GRAPH_ZOOM_MAX, self.graph_zoom * factor))
+        applied = new_zoom / self.graph_zoom
+
+        if abs(applied - 1.0) < 1e-9:
+            return
+
+        x = self.graph_canvas.canvasx(event.x)
+        y = self.graph_canvas.canvasy(event.y)
+        self.graph_canvas.scale("all", x, y, applied, applied)
+        self.graph_zoom = new_zoom
+        self.sync_graph_node_boxes_from_canvas()
+        self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
+
+    def on_graph_pan_start(self, event):
+        self.graph_pan_active = True
+        self.graph_canvas.scan_mark(event.x, event.y)
+
+    def on_graph_pan_drag(self, event):
+        if not self.graph_pan_active:
+            return
+
+        self.graph_canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def on_graph_pan_end(self, event):
+        self.graph_pan_active = False
 
     def xkill_window_row(self, item):
         if not item or item in self.killed_rows:
@@ -1670,6 +1927,12 @@ class XClientTreeApp:
         if not item:
             return
 
+        if self.view_mode == "rooted":
+            if self.graph_node_type.get(item) != "process":
+                return
+            self.expand_rooted_direct_node(item)
+            return
+
         if self.row_type.get(item) != "process":
             return
 
@@ -1691,6 +1954,12 @@ class XClientTreeApp:
 
     def expand_all_descendants(self, item):
         if not item:
+            return
+
+        if self.view_mode == "rooted":
+            if self.graph_node_type.get(item) != "process":
+                return
+            self.expand_rooted_all_node(item)
             return
 
         if self.row_type.get(item) != "process":
@@ -1826,6 +2095,13 @@ class XClientTreeApp:
         new_context = self.reload_callback()
         self.context.clear()
         self.context.update(new_context)
+        valid_pids = set(self.context["procs"].keys())
+        self.rooted_expanded_direct_pids = set(
+            pid for pid in self.rooted_expanded_direct_pids if pid in valid_pids
+        )
+        self.rooted_expanded_all_pids = set(
+            pid for pid in self.rooted_expanded_all_pids if pid in valid_pids
+        )
         self.build_initial_tree()
 
 
