@@ -60,6 +60,9 @@ GRAPH_NODE_MIN_WIDTH = 120
 GRAPH_NODE_HEIGHT_SINGLE_LINE = 34
 GRAPH_NODE_HEIGHT_DOUBLE_LINE = 58
 GRAPH_NODE_TEXT_PADDING_X = 10
+GRAPH_NODE_TITLE_Y_WITH_DETAIL = 14
+GRAPH_NODE_SEPARATOR_Y = 24
+GRAPH_NODE_DETAIL_Y = 38
 GRAPH_NODE_OUTLINE_WIDTH = 2
 GRAPH_LAYOUT_MARGIN_X = 40
 GRAPH_START_Y = 35
@@ -1163,7 +1166,7 @@ class XClientTreeApp:
         )
         title_item = canvas.create_text(
             x + 10,
-            y + (14 if has_detail else (height / 2.0)),
+            y + (GRAPH_NODE_TITLE_Y_WITH_DETAIL if has_detail else (height / 2.0)),
             text=title_text,
             anchor="w",
             font=self.graph_title_font,
@@ -1174,16 +1177,16 @@ class XClientTreeApp:
         if has_detail:
             separator = canvas.create_line(
                 x + 10,
-                y + 24,
+                y + GRAPH_NODE_SEPARATOR_Y,
                 x + width - 10,
-                y + 24,
+                y + GRAPH_NODE_SEPARATOR_Y,
                 fill=GRAPH_CARD_SEPARATOR_COLOR,
                 width=1,
                 tags=("graph_node",),
             )
             detail_item = canvas.create_text(
                 x + 10,
-                y + 38,
+                y + GRAPH_NODE_DETAIL_Y,
                 text=detail_text,
                 anchor="w",
                 font=self.graph_detail_font,
@@ -1366,6 +1369,7 @@ class XClientTreeApp:
             windows = self.context["pid_to_windows"].get(pid, [])
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
             comm = info.get("comm", "")
+            comm_display = comm if str(comm).strip() else "PID {}".format(pid)
             role_hint = "root" if depth == 0 else "descendant"
             role = self.role_for_pid(pid, role_hint)
 
@@ -1376,7 +1380,7 @@ class XClientTreeApp:
                 "node_type": "process",
                 "pid": pid,
                 "window_ids": window_ids,
-                "title": comm,
+                "title": comm_display,
                 "details": "",
             }
             depth_map[process_node_id] = depth
@@ -1390,12 +1394,13 @@ class XClientTreeApp:
             for seq, window in enumerate(windows, 1):
                 window_id = window.get("WINDOW_ID", "")
                 wm_class_first = wm_class_first_field(window.get("WM_CLASS", ""))
+                wm_class_display = wm_class_first if str(wm_class_first).strip() else (window_id or "Window {}".format(seq))
                 window_node_id = "g_win_{}_{}".format(pid, seq)
                 node_specs[window_node_id] = {
                     "node_type": "window",
                     "pid": pid,
                     "window_ids": [window_id] if window_id else [],
-                    "title": wm_class_first,
+                    "title": wm_class_display,
                     "details": "",
                 }
                 child_map[process_node_id].append(window_node_id)
