@@ -58,8 +58,11 @@ MAX_TREE_NODES = 30000
 
 TRUNCATION_CHAR = "..."
 GRAPH_NODE_TEXT_MAX_CHARS = 54
-GRAPH_NODE_WIDTH = 380
-GRAPH_NODE_HEIGHT = 58
+GRAPH_NODE_MIN_WIDTH = 120
+GRAPH_NODE_MAX_WIDTH = 380
+GRAPH_NODE_HEIGHT_SINGLE_LINE = 34
+GRAPH_NODE_HEIGHT_DOUBLE_LINE = 58
+GRAPH_NODE_TEXT_PADDING_X = 10
 GRAPH_NODE_OUTLINE_WIDTH = 2
 GRAPH_LAYOUT_MARGIN_X = 40
 GRAPH_START_Y = 35
@@ -639,9 +642,11 @@ class XClientTreeApp:
     ):
         import tkinter as tk
         from tkinter import ttk
+        from tkinter import font as tkfont
 
         self.tk = tk
         self.ttk = ttk
+        self.tkfont = tkfont
 
         self.root = root
         self.context = context
@@ -675,6 +680,10 @@ class XClientTreeApp:
         self.rooted_visible_process_children = defaultdict(list)
         self.view_mode = "chain"
         self.view_toggle_text = tk.StringVar(value="Switch to Rooted Tree View")
+        self.graph_title_font = tkfont.Font(root=self.root, font="TkDefaultFont")
+        self.graph_title_font.configure(size=10, weight="bold")
+        self.graph_detail_font = tkfont.Font(root=self.root, font="TkDefaultFont")
+        self.graph_detail_font.configure(size=10)
 
         self.root.title("X11 Related Client Finder. Powered by www.icinfra.cn")
         self.root.geometry("1520x760")
@@ -1125,10 +1134,25 @@ class XClientTreeApp:
 
         return value[:max_chars - len(TRUNCATION_CHAR)] + TRUNCATION_CHAR
 
-    def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
+    def graph_node_text_and_size(self, title, details):
+        title_text = self.short_text(title)
+        detail_text = self.short_text(details)
+        has_detail = bool(detail_text.strip())
+        title_width = self.graph_title_font.measure(title_text)
+        detail_width = self.graph_detail_font.measure(detail_text) if has_detail else 0
+        content_width = max(title_width, detail_width)
+        width = max(
+            GRAPH_NODE_MIN_WIDTH,
+            min(GRAPH_NODE_MAX_WIDTH, content_width + GRAPH_NODE_TEXT_PADDING_X * 2),
+        )
+        height = GRAPH_NODE_HEIGHT_DOUBLE_LINE if has_detail else GRAPH_NODE_HEIGHT_SINGLE_LINE
+        return title_text, detail_text, has_detail, width, height
+
+    def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details, width=None, height=None):
         canvas = self.graph_canvas
-        width = GRAPH_NODE_WIDTH
-        height = GRAPH_NODE_HEIGHT
+        title_text, detail_text, has_detail, default_width, default_height = self.graph_node_text_and_size(title, details)
+        width = default_width if width is None else width
+        height = default_height if height is None else height
         fill = GRAPH_PROCESS_FILL_COLOR if node_type == "process" else GRAPH_WINDOW_FILL_COLOR
         outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
 
@@ -1153,30 +1177,33 @@ class XClientTreeApp:
         )
         title_item = canvas.create_text(
             x + 10,
-            y + 14,
-            text=self.short_text(title),
+            y + (14 if has_detail else (height / 2.0)),
+            text=title_text,
             anchor="w",
-            font=("TkDefaultFont", 10, "bold"),
+            font=self.graph_title_font,
             tags=("graph_node",),
         )
-        separator = canvas.create_line(
-            x + 10,
-            y + 24,
-            x + width - 10,
-            y + 24,
-            fill=GRAPH_CARD_SEPARATOR_COLOR,
-            width=1,
-            tags=("graph_node",),
-        )
-        detail_item = canvas.create_text(
-            x + 10,
-            y + 38,
-            text=self.short_text(details),
-            anchor="w",
-            tags=("graph_node",),
-        )
+        items = [rect, title_item, shadow]
 
-        items = [rect, title_item, detail_item, shadow, separator]
+        if has_detail:
+            separator = canvas.create_line(
+                x + 10,
+                y + 24,
+                x + width - 10,
+                y + 24,
+                fill=GRAPH_CARD_SEPARATOR_COLOR,
+                width=1,
+                tags=("graph_node",),
+            )
+            detail_item = canvas.create_text(
+                x + 10,
+                y + 38,
+                text=detail_text,
+                anchor="w",
+                font=self.graph_detail_font,
+                tags=("graph_node",),
+            )
+            items.extend([detail_item, separator])
         self.graph_node_type[node_id] = node_type
         self.graph_node_pid[node_id] = pid
         self.graph_node_window_ids[node_id] = window_ids
@@ -1409,23 +1436,34 @@ class XClientTreeApp:
         if not levels:
             return
 
-        max_nodes_per_level = max(len(items) for items in levels.values())
-        max_level_width = (
-            max_nodes_per_level * GRAPH_NODE_WIDTH
-            + max(0, max_nodes_per_level - 1) * GRAPH_NODE_X_GAP
-        )
+        for spec in node_specs.values():
+            _, _, _, width, height = self.graph_node_text_and_size(spec["title"], spec["details"])
+            spec["width"] = width
+            spec["height"] = height
+
+        def level_total_width(node_ids):
+            if not node_ids:
+                return 0
+            return (
+                sum(node_specs[node_id]["width"] for node_id in node_ids)
+                + max(0, len(node_ids) - 1) * GRAPH_NODE_X_GAP
+            )
+
+        level_heights = {
+            depth: max(node_specs[node_id]["height"] for node_id in node_ids)
+            for depth, node_ids in levels.items()
+        }
+        max_level_width = max(level_total_width(items) for items in levels.values())
+        current_y = GRAPH_START_Y
 
         for depth in sorted(levels.keys()):
             node_ids = levels[depth]
-            level_width = (
-                len(node_ids) * GRAPH_NODE_WIDTH
-                + max(0, len(node_ids) - 1) * GRAPH_NODE_X_GAP
-            )
+            level_width = level_total_width(node_ids)
             start_x = GRAPH_LAYOUT_MARGIN_X + (max_level_width - level_width) / 2
-            y = GRAPH_START_Y + depth * (GRAPH_NODE_HEIGHT + GRAPH_LEVEL_Y_GAP)
+            y = current_y
+            x = start_x
 
-            for index, node_id in enumerate(node_ids):
-                x = start_x + index * (GRAPH_NODE_WIDTH + GRAPH_NODE_X_GAP)
+            for node_id in node_ids:
                 spec = node_specs[node_id]
                 self.create_graph_node(
                     node_id,
@@ -1436,7 +1474,11 @@ class XClientTreeApp:
                     y,
                     spec["title"],
                     spec["details"],
+                    spec["width"],
+                    spec["height"],
                 )
+                x += spec["width"] + GRAPH_NODE_X_GAP
+            current_y += level_heights[depth] + GRAPH_LEVEL_Y_GAP
 
         for parent_node_id, child_node_ids in child_map.items():
             for child_node_id in child_node_ids:
