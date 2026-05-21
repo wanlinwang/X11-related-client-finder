@@ -1727,10 +1727,7 @@ class XClientTreeApp:
         else:
             return
 
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root)
 
     def rooted_descendants(self, root_pid):
         descendants = set()
@@ -1837,12 +1834,41 @@ class XClientTreeApp:
         if abs(applied - 1.0) < GRAPH_ZOOM_EPSILON:
             return
 
-        x = self.graph_canvas.canvasx(event.x)
-        y = self.graph_canvas.canvasy(event.y)
-        self.graph_canvas.scale("all", x, y, applied, applied)
+        # Record canvas coords of the mouse BEFORE scaling (the zoom anchor).
+        # canvas.scale() preserves this point in canvas coordinate space —
+        # it remains at the same canvas coordinate (cx, cy) after the transform.
+        cx = self.graph_canvas.canvasx(event.x)
+        cy = self.graph_canvas.canvasy(event.y)
+        self.graph_canvas.scale("all", cx, cy, applied, applied)
         self.graph_zoom = new_zoom
         self.sync_graph_node_boxes_from_canvas()
-        self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
+
+        # Update scrollregion to cover all scaled items.
+        bbox = self.graph_canvas.bbox("all")
+        if not bbox:
+            return
+
+        self.graph_canvas.configure(scrollregion=bbox)
+
+        # Updating the scrollregion can cause Tkinter to clamp/shift the view
+        # (e.g. when the old view position falls outside the new, smaller
+        # scrollregion after a zoom-out).  Restore the viewport explicitly so
+        # that the zoom anchor (cx, cy) stays exactly under the mouse cursor.
+        #
+        # The left canvas edge shown in the viewport must equal (cx - event.x)
+        # so that canvas coord cx lines up with widget coord event.x.
+        # xview_moveto takes a fraction: (desired_left - sr_x1) / sr_width.
+        scrollregion_x1, scrollregion_y1, scrollregion_x2, scrollregion_y2 = bbox
+        scrollregion_width = scrollregion_x2 - scrollregion_x1
+        scrollregion_height = scrollregion_y2 - scrollregion_y1
+
+        if scrollregion_width > 0:
+            viewport_x_fraction = max(0.0, (cx - event.x - scrollregion_x1) / scrollregion_width)
+            self.graph_canvas.xview_moveto(viewport_x_fraction)
+
+        if scrollregion_height > 0:
+            viewport_y_fraction = max(0.0, (cy - event.y - scrollregion_y1) / scrollregion_height)
+            self.graph_canvas.yview_moveto(viewport_y_fraction)
 
     def on_graph_pan_start(self, event):
         self.graph_pan_active = True
@@ -2085,10 +2111,7 @@ class XClientTreeApp:
         else:
             return
 
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root)
 
     def refresh_all(self):
         new_context = self.reload_callback()
