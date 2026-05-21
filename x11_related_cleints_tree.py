@@ -30,12 +30,14 @@ Remote shell compatibility:
 """
 
 import argparse
+import io
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import defaultdict
@@ -81,6 +83,16 @@ GRAPH_CARD_SEPARATOR_COLOR = "#c0c8d6"
 GRAPH_DEAD_ITEM_COLOR = "gray"
 GRAPH_SELECTION_OUTLINE_COLOR = "#d62728"
 GRAPH_SELECTION_OUTLINE_WIDTH = 3
+GRAPH_WINDOW_THUMB_WIDTH = 160
+GRAPH_WINDOW_THUMB_HEIGHT = 100
+GRAPH_WINDOW_NODE_WIDTH = GRAPH_WINDOW_THUMB_WIDTH + 20
+GRAPH_WINDOW_NODE_HEIGHT = GRAPH_WINDOW_THUMB_HEIGHT + 48
+GRAPH_WINDOW_THUMB_TOP_PADDING = 10
+GRAPH_WINDOW_THUMB_BG = "#f2f4f8"
+GRAPH_WINDOW_THUMB_PENDING_TEXT = "Loading preview..."
+GRAPH_WINDOW_THUMB_MISSING_TEXT = "No preview"
+GRAPH_WINDOW_THUMB_CAPTURE_TIMEOUT_SECONDS = 6
+CANVAS_ITEM_TYPES_SUPPORTING_FILL = {"rectangle", "oval", "arc", "polygon", "line", "text"}
 
 
 def command_exists(cmd):
@@ -669,6 +681,9 @@ class XClientTreeApp:
         self.graph_node_canvas_items = {}
         self.graph_canvas_item_node = {}
         self.graph_node_boxes = {}
+        self.graph_node_window_id = {}
+        self.graph_node_thumb_image_item = {}
+        self.graph_node_thumb_text_item = {}
         self.graph_edges = []
         self.graph_selected_node = None
         self.graph_drag_node = None
@@ -684,6 +699,37 @@ class XClientTreeApp:
         self.graph_title_font.configure(size=10, weight="bold")
         self.graph_detail_font = tkfont.Font(root=self.root, font="TkDefaultFont")
         self.graph_detail_font.configure(size=10)
+        self.thumbnail_cache = {}
+        self.thumbnail_inflight = set()
+        self.thumbnail_tool_available = command_exists("import")
+        self.pillow_enabled = False
+        self.pillow_image_module = None
+        self.pillow_imagetk_module = None
+        self.pillow_resample_lanczos = None
+        self.thumb_placeholder_photo = tk.PhotoImage(
+            width=GRAPH_WINDOW_THUMB_WIDTH,
+            height=GRAPH_WINDOW_THUMB_HEIGHT,
+        )
+        self.thumb_placeholder_photo.put(
+            GRAPH_WINDOW_THUMB_BG,
+            to=(0, 0, GRAPH_WINDOW_THUMB_WIDTH, GRAPH_WINDOW_THUMB_HEIGHT),
+        )
+
+        if self.thumbnail_tool_available:
+            try:
+                from PIL import Image as pillow_image_module
+                from PIL import ImageTk as pillow_imagetk_module
+
+                self.pillow_image_module = pillow_image_module
+                self.pillow_imagetk_module = pillow_imagetk_module
+                self.pillow_enabled = True
+                self.pillow_resample_lanczos = (
+                    pillow_image_module.Resampling.LANCZOS
+                    if hasattr(pillow_image_module, "Resampling")
+                    else pillow_image_module.LANCZOS
+                )
+            except Exception:
+                self.pillow_enabled = False
 
         self.root.title("X11 Related Client Finder. Powered by www.icinfra.cn")
         self.root.geometry("1520x760")
@@ -928,6 +974,9 @@ class XClientTreeApp:
         self.graph_node_canvas_items.clear()
         self.graph_canvas_item_node.clear()
         self.graph_node_boxes.clear()
+        self.graph_node_window_id.clear()
+        self.graph_node_thumb_image_item.clear()
+        self.graph_node_thumb_text_item.clear()
         self.graph_edges.clear()
         self.graph_selected_node = None
         self.graph_drag_node = None
@@ -1137,13 +1186,25 @@ class XClientTreeApp:
         height = GRAPH_NODE_HEIGHT_DOUBLE_LINE if has_detail else GRAPH_NODE_HEIGHT_SINGLE_LINE
         return title_text, detail_text, has_detail, width, height
 
-    def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details, width=None, height=None):
+    def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details, width=None, height=None, window_id=""):
         canvas = self.graph_canvas
-        title_text, detail_text, has_detail, default_width, default_height = self.graph_node_text_and_size(title, details)
-        width = default_width if width is None else width
-        height = default_height if height is None else height
         fill = GRAPH_PROCESS_FILL_COLOR if node_type == "process" else GRAPH_WINDOW_FILL_COLOR
         outline = GRAPH_PROCESS_OUTLINE_COLOR if node_type == "process" else GRAPH_WINDOW_OUTLINE_COLOR
+
+        if node_type == "window":
+            title_text = str(title or "")
+            width = GRAPH_WINDOW_NODE_WIDTH if width is None else width
+            height = GRAPH_WINDOW_NODE_HEIGHT if height is None else height
+            thumb_top = y + GRAPH_WINDOW_THUMB_TOP_PADDING
+            thumb_left = x + (width - GRAPH_WINDOW_THUMB_WIDTH) / 2
+            thumb_right = thumb_left + GRAPH_WINDOW_THUMB_WIDTH
+            thumb_bottom = thumb_top + GRAPH_WINDOW_THUMB_HEIGHT
+            title_y = thumb_bottom + 20
+            has_detail = False
+        else:
+            title_text, detail_text, has_detail, default_width, default_height = self.graph_node_text_and_size(title, details)
+            width = default_width if width is None else width
+            height = default_height if height is None else height
 
         shadow = canvas.create_rectangle(
             x + 3,
@@ -1164,17 +1225,56 @@ class XClientTreeApp:
             width=GRAPH_NODE_OUTLINE_WIDTH,
             tags=("graph_node",),
         )
-        title_item = canvas.create_text(
-            x + 10,
-            y + (GRAPH_NODE_TITLE_Y_WITH_DETAIL if has_detail else (height / 2.0)),
-            text=title_text,
-            anchor="w",
-            font=self.graph_title_font,
-            tags=("graph_node",),
-        )
+        if node_type == "window":
+            title_item = canvas.create_text(
+                x + (width / 2.0),
+                title_y,
+                text=title_text,
+                anchor="center",
+                font=self.graph_title_font,
+                tags=("graph_node",),
+            )
+        else:
+            title_item = canvas.create_text(
+                x + 10,
+                y + (GRAPH_NODE_TITLE_Y_WITH_DETAIL if has_detail else (height / 2.0)),
+                text=title_text,
+                anchor="w",
+                font=self.graph_title_font,
+                tags=("graph_node",),
+            )
         items = [rect, title_item, shadow]
 
-        if has_detail:
+        if node_type == "window":
+            thumb_rect = canvas.create_rectangle(
+                thumb_left,
+                thumb_top,
+                thumb_right,
+                thumb_bottom,
+                fill=GRAPH_WINDOW_THUMB_BG,
+                outline=GRAPH_WINDOW_OUTLINE_COLOR,
+                width=1,
+                tags=("graph_node",),
+            )
+            thumb_image = canvas.create_image(
+                (thumb_left + thumb_right) / 2,
+                (thumb_top + thumb_bottom) / 2,
+                image=self.thumb_placeholder_photo,
+                tags=("graph_node",),
+            )
+            thumb_text = canvas.create_text(
+                (thumb_left + thumb_right) / 2,
+                (thumb_top + thumb_bottom) / 2,
+                text=GRAPH_WINDOW_THUMB_PENDING_TEXT,
+                anchor="center",
+                font=self.graph_detail_font,
+                tags=("graph_node",),
+            )
+            items.extend([thumb_rect, thumb_image, thumb_text])
+            self.graph_node_thumb_image_item[node_id] = thumb_image
+            self.graph_node_thumb_text_item[node_id] = thumb_text
+            self.graph_node_window_id[node_id] = str(window_id or "")
+        elif has_detail:
             separator = canvas.create_line(
                 x + 10,
                 y + GRAPH_NODE_SEPARATOR_Y,
@@ -1281,6 +1381,154 @@ class XClientTreeApp:
             "target": target_node_id,
         })
 
+    def render_thumbnail_placeholder_state(self, node_id, message):
+        text_item = self.graph_node_thumb_text_item.get(node_id)
+        image_item = self.graph_node_thumb_image_item.get(node_id)
+
+        if image_item:
+            self.graph_canvas.itemconfigure(image_item, image=self.thumb_placeholder_photo)
+
+        if text_item:
+            self.graph_canvas.itemconfigure(text_item, text=message, state="normal")
+
+    def apply_cached_thumbnail_to_node(self, node_id):
+        window_id = self.graph_node_window_id.get(node_id, "")
+        entry = self.thumbnail_cache.get(window_id)
+
+        if not window_id:
+            self.render_thumbnail_placeholder_state(node_id, GRAPH_WINDOW_THUMB_MISSING_TEXT)
+            return
+
+        if not entry:
+            self.render_thumbnail_placeholder_state(node_id, GRAPH_WINDOW_THUMB_PENDING_TEXT)
+            return
+
+        text_item = self.graph_node_thumb_text_item.get(node_id)
+        image_item = self.graph_node_thumb_image_item.get(node_id)
+
+        if entry.get("status") == "ok":
+            photo = entry.get("photo")
+            if image_item and photo is not None:
+                self.graph_canvas.itemconfigure(image_item, image=photo)
+            if text_item:
+                self.graph_canvas.itemconfigure(text_item, state="hidden")
+            return
+
+        self.render_thumbnail_placeholder_state(node_id, GRAPH_WINDOW_THUMB_MISSING_TEXT)
+
+    def mark_window_thumbnail_missing(self, window_id):
+        if not window_id:
+            return
+
+        self.thumbnail_cache[window_id] = {"status": "failed", "photo": None}
+        self.thumbnail_inflight.discard(window_id)
+
+        for node_id, node_window_id in list(self.graph_node_window_id.items()):
+            if node_window_id == window_id:
+                self.apply_cached_thumbnail_to_node(node_id)
+
+    def capture_window_thumbnail_bytes(self, window_id):
+        if not window_id or not self.thumbnail_tool_available or not self.pillow_enabled:
+            return None
+
+        temp_file = None
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".png",
+                delete=False,
+            ) as handle:
+                temp_file = handle.name
+
+            rc, out, err = run_cmd(
+                ["import", "-window", window_id, temp_file],
+                timeout=GRAPH_WINDOW_THUMB_CAPTURE_TIMEOUT_SECONDS,
+            )
+
+            if rc != 0:
+                return None
+
+            with self.pillow_image_module.open(temp_file) as image:
+                image = image.convert("RGB")
+                image.thumbnail(
+                    (GRAPH_WINDOW_THUMB_WIDTH, GRAPH_WINDOW_THUMB_HEIGHT),
+                    self.pillow_resample_lanczos,
+                )
+                board = self.pillow_image_module.new(
+                    "RGB",
+                    (GRAPH_WINDOW_THUMB_WIDTH, GRAPH_WINDOW_THUMB_HEIGHT),
+                    GRAPH_WINDOW_THUMB_BG,
+                )
+                left = max(0, (GRAPH_WINDOW_THUMB_WIDTH - image.width) // 2)
+                top = max(0, (GRAPH_WINDOW_THUMB_HEIGHT - image.height) // 2)
+                board.paste(image, (left, top))
+                stream = io.BytesIO()
+                board.save(stream, format="PNG")
+                return stream.getvalue()
+        except Exception:
+            return None
+        finally:
+            if temp_file:
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+
+    def on_window_thumbnail_loaded(self, window_id, image_bytes):
+        self.thumbnail_inflight.discard(window_id)
+
+        if not image_bytes:
+            self.thumbnail_cache[window_id] = {"status": "failed", "photo": None}
+        else:
+            photo = None
+            try:
+                with self.pillow_image_module.open(io.BytesIO(image_bytes)) as img:
+                    photo = self.pillow_imagetk_module.PhotoImage(image=img.copy(), master=self.root)
+            except Exception:
+                photo = None
+
+            if photo is None:
+                self.thumbnail_cache[window_id] = {"status": "failed", "photo": None}
+            else:
+                self.thumbnail_cache[window_id] = {"status": "ok", "photo": photo}
+
+        for node_id, node_window_id in list(self.graph_node_window_id.items()):
+            if node_window_id == window_id:
+                self.apply_cached_thumbnail_to_node(node_id)
+
+        self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
+
+    def start_window_thumbnail_worker(self, window_id):
+        if not window_id or window_id in self.thumbnail_inflight:
+            return
+
+        self.thumbnail_inflight.add(window_id)
+
+        def worker():
+            image_bytes = self.capture_window_thumbnail_bytes(window_id)
+            self.root.after(
+                0,
+                lambda window_id=window_id, image_bytes=image_bytes: self.on_window_thumbnail_loaded(window_id, image_bytes),
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def schedule_rooted_window_thumbnails(self):
+        for node_id, node_type in list(self.graph_node_type.items()):
+            if node_type != "window":
+                continue
+
+            window_id = self.graph_node_window_id.get(node_id, "")
+            self.apply_cached_thumbnail_to_node(node_id)
+
+            if (
+                window_id
+                and self.thumbnail_tool_available
+                and self.pillow_enabled
+                and window_id not in self.thumbnail_cache
+            ):
+                self.start_window_thumbnail_worker(window_id)
+
     def build_rooted_graph(self):
         chain = [pid for pid in self.context["ancestor_chain"] if pid != INIT_PID]
         chain.reverse()
@@ -1380,6 +1628,7 @@ class XClientTreeApp:
                 "node_type": "process",
                 "pid": pid,
                 "window_ids": window_ids,
+                "window_id": "",
                 "title": comm_display,
                 "details": "",
             }
@@ -1400,6 +1649,7 @@ class XClientTreeApp:
                     "node_type": "window",
                     "pid": pid,
                     "window_ids": [window_id] if window_id else [],
+                    "window_id": window_id,
                     "title": wm_class_display,
                     "details": "",
                 }
@@ -1428,7 +1678,11 @@ class XClientTreeApp:
             return
 
         for spec in node_specs.values():
-            _, _, _, width, height = self.graph_node_text_and_size(spec["title"], spec["details"])
+            if spec["node_type"] == "window":
+                width = GRAPH_WINDOW_NODE_WIDTH
+                height = GRAPH_WINDOW_NODE_HEIGHT
+            else:
+                _, _, _, width, height = self.graph_node_text_and_size(spec["title"], spec["details"])
             spec["width"] = width
             spec["height"] = height
 
@@ -1467,6 +1721,7 @@ class XClientTreeApp:
                     spec["details"],
                     spec["width"],
                     spec["height"],
+                    spec.get("window_id", ""),
                 )
                 x += spec["width"] + GRAPH_NODE_X_GAP
             current_y += level_heights[depth] + GRAPH_LEVEL_Y_GAP
@@ -1476,6 +1731,7 @@ class XClientTreeApp:
                 self.create_graph_edge(parent_node_id, child_node_id)
 
         self.graph_canvas.configure(scrollregion=self.graph_canvas.bbox("all"))
+        self.schedule_rooted_window_thumbnails()
 
     def build_initial_tree(self):
         self.clear_display_state()
@@ -1587,7 +1843,9 @@ class XClientTreeApp:
         if item in self.graph_node_canvas_items:
             self.killed_rows.add(item)
             for canvas_item in self.graph_node_canvas_items.get(item, []):
-                self.graph_canvas.itemconfigure(canvas_item, fill=GRAPH_DEAD_ITEM_COLOR)
+                canvas_item_type = self.graph_canvas.type(canvas_item)
+                if canvas_item_type in CANVAS_ITEM_TYPES_SUPPORTING_FILL:
+                    self.graph_canvas.itemconfigure(canvas_item, fill=GRAPH_DEAD_ITEM_COLOR)
             return
 
         if not self.tree.exists(item):
@@ -1933,6 +2191,7 @@ class XClientTreeApp:
         # Gray out immediately; xkill runs in background.
         self.killed_rows.add(item)
         self.tree.item(item, tags=("killed",))
+        self.mark_window_thumbnail_missing(window_ids[0])
 
         xkill_window_async(window_ids[0])
 
@@ -1948,6 +2207,7 @@ class XClientTreeApp:
             return
 
         self.mark_row_dead(node_id)
+        self.mark_window_thumbnail_missing(window_ids[0])
         xkill_window_async(window_ids[0])
 
     def on_double_click(self, event):
@@ -2153,6 +2413,8 @@ class XClientTreeApp:
         new_context = self.reload_callback()
         self.context.clear()
         self.context.update(new_context)
+        self.thumbnail_cache.clear()
+        self.thumbnail_inflight.clear()
         valid_pids = set(self.context["procs"].keys())
         self.rooted_expanded_direct_pids = set(
             pid for pid in self.rooted_expanded_direct_pids if pid in valid_pids

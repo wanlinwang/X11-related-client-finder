@@ -28,6 +28,7 @@ From the GUI you can:
 - `xprop`
 - `xdotool`
 - `ssh`
+- Optional (for rooted-window thumbnails): ImageMagick `import` and Python Pillow (`python3-pillow`)
 - Optional: `zenity` or `xmessage` for nicer info/error dialogs
 
 **Remote host** (the one named by `WM_CLIENT_MACHINE`):
