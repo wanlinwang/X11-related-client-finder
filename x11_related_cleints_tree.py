@@ -92,6 +92,7 @@ GRAPH_WINDOW_THUMB_BG = "#f2f4f8"
 GRAPH_WINDOW_THUMB_PENDING_TEXT = "Loading preview..."
 GRAPH_WINDOW_THUMB_MISSING_TEXT = "No preview"
 GRAPH_WINDOW_THUMB_CAPTURE_TIMEOUT_SECONDS = 6
+CANVAS_ITEM_TYPES_SUPPORTING_FILL = {"rectangle", "oval", "arc", "polygon", "line", "text"}
 
 
 def command_exists(cmd):
@@ -1842,7 +1843,9 @@ class XClientTreeApp:
         if item in self.graph_node_canvas_items:
             self.killed_rows.add(item)
             for canvas_item in self.graph_node_canvas_items.get(item, []):
-                self.graph_canvas.itemconfigure(canvas_item, fill=GRAPH_DEAD_ITEM_COLOR)
+                canvas_item_type = self.graph_canvas.type(canvas_item)
+                if canvas_item_type in CANVAS_ITEM_TYPES_SUPPORTING_FILL:
+                    self.graph_canvas.itemconfigure(canvas_item, fill=GRAPH_DEAD_ITEM_COLOR)
             return
 
         if not self.tree.exists(item):
