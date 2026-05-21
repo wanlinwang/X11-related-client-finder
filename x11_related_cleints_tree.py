@@ -54,6 +54,15 @@ DEFAULT_FLASH_INTERVAL = 0.45
 
 MAX_TREE_NODES = 30000
 
+GRAPH_NODE_TEXT_MAX_CHARS = 54
+GRAPH_NODE_WIDTH = 380
+GRAPH_NODE_HEIGHT = 58
+GRAPH_PROCESS_X = 40
+GRAPH_WINDOW_X = 500
+GRAPH_START_Y = 35
+GRAPH_PROCESS_GAP = 120
+GRAPH_WINDOW_GAP = 74
+
 
 def command_exists(cmd):
     return shutil.which(cmd) is not None
@@ -1055,7 +1064,7 @@ class XClientTreeApp:
                 open_item=True,
             )
 
-    def short_text(self, value, max_chars=54):
+    def short_text(self, value, max_chars=GRAPH_NODE_TEXT_MAX_CHARS):
         value = str(value or "")
 
         if len(value) <= max_chars:
@@ -1065,8 +1074,8 @@ class XClientTreeApp:
 
     def create_graph_node(self, node_id, node_type, pid, window_ids, x, y, title, details):
         canvas = self.graph_canvas
-        width = 380
-        height = 58
+        width = GRAPH_NODE_WIDTH
+        height = GRAPH_NODE_HEIGHT
         fill = "#e8f1ff" if node_type == "process" else "#e8f7e8"
         outline = "#4c78a8" if node_type == "process" else "#59a14f"
 
@@ -1136,11 +1145,11 @@ class XClientTreeApp:
         if not chain:
             chain = [self.context["seed_pid"]]
 
-        process_x = 40
-        window_x = 500
-        y = 35
-        process_gap = 120
-        window_gap = 74
+        process_x = GRAPH_PROCESS_X
+        window_x = GRAPH_WINDOW_X
+        y = GRAPH_START_Y
+        process_gap = GRAPH_PROCESS_GAP
+        window_gap = GRAPH_WINDOW_GAP
         previous_process_box = None
 
         for index, pid in enumerate(chain):
@@ -1150,7 +1159,7 @@ class XClientTreeApp:
             windows = self.context["pid_to_windows"].get(pid, [])
             window_ids = [item.get("WINDOW_ID", "") for item in windows if item.get("WINDOW_ID", "")]
 
-            process_title = "PID {}  {}".format(pid, role)
+            process_title = "PID {} {}".format(pid, role)
             process_details = "{}  user={} stat={} windows={}".format(
                 info.get("comm", ""),
                 info.get("user", ""),
