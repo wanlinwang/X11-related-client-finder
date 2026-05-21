@@ -1134,9 +1134,51 @@ class XClientTreeApp:
 
         return value[:max_chars - len(TRUNCATION_CHAR)] + TRUNCATION_CHAR
 
+    def fit_text_to_pixel_width(self, value, font, max_width):
+        value = str(value or "")
+
+        if max_width <= 0:
+            return ""
+
+        if font.measure(value) <= max_width:
+            return value
+
+        trunc_width = font.measure(TRUNCATION_CHAR)
+
+        if trunc_width >= max_width:
+            out = ""
+            for ch in TRUNCATION_CHAR:
+                if font.measure(out + ch) > max_width:
+                    break
+                out += ch
+            return out
+
+        low = 0
+        high = len(value)
+
+        while low < high:
+            mid = (low + high + 1) // 2
+            candidate = value[:mid] + TRUNCATION_CHAR
+
+            if font.measure(candidate) <= max_width:
+                low = mid
+            else:
+                high = mid - 1
+
+        return value[:low] + TRUNCATION_CHAR
+
     def graph_node_text_and_size(self, title, details):
-        title_text = self.short_text(title)
-        detail_text = self.short_text(details)
+        max_text_width = max(1, GRAPH_NODE_MAX_WIDTH - GRAPH_NODE_TEXT_PADDING_X * 2)
+        title_text = self.fit_text_to_pixel_width(
+            self.short_text(title),
+            self.graph_title_font,
+            max_text_width,
+        )
+        detail_text = self.fit_text_to_pixel_width(
+            self.short_text(details),
+            self.graph_detail_font,
+            max_text_width,
+        )
         has_detail = bool(detail_text.strip())
         title_width = self.graph_title_font.measure(title_text)
         detail_width = self.graph_detail_font.measure(detail_text) if has_detail else 0
